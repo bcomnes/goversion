@@ -7,7 +7,12 @@
 [pkg-go-dev-img]: https://pkg.go.dev/badge/github.com/bcomnes/goversion
 [pkg-go-dev-url]: https://pkg.go.dev/github.com/bcomnes/goversion
 
-`goversion` is a tool and library for managing semantic version bumps in your Go projects. It automates updating a version file, staging changes, committing, and tagging via Git—all through a simple CLI and programmatic API.
+`goversion` is a tool and library for managing semantic version bumps in your Go projects. It bumps a `version.go` file while creating  a semantic version commit and tag.
+It is intended for use with `go tool`s that are consumed from source.
+
+- `go generate` can generate go code from git commits, but it's too late to capture the current git tag into src during the generate step.
+- Build flags are useful for inserting version tags from git into binaries, however `go tool` consumes source code and not binaries.
+- By bumping `version.go` before creating the version commit, tools consumed by `go tool` are able to introspect version data using a simple and clean workflow
 
 ## Features
 
@@ -21,7 +26,8 @@
 Install via Go modules:
 
 ```console
-go get github.com/bcomnes/goversion
+# Install go version as a tool
+go get -tool github.com/bcomnes/goversion
 ```
 
 ## Usage
@@ -31,7 +37,7 @@ go get github.com/bcomnes/goversion
 The `goversion` CLI defaults to using `pkg/version.go` as the version file, but you can override this with the `-version-file` flag. Use the `-file` flag to specify additional files to be staged.
 
 ```
-goversion [flags] <version-bump>
+go tool github.com/bcomnes/goversion/cmd [flags] <version-bump>
 ```
 
 #### Flags
