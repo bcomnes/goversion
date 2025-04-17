@@ -242,29 +242,37 @@ var (
 }
 
 // readCurrentVersion reads the version file at the given path
-// and extracts the version string from a line that looks like:
-//   Version = "dev" or Version = "1.2.3".
-// If the file does not exist, it creates the file with a default version "dev".
+// and extracts the version string. If the file does not exist,
+// it first tries to get the latest tag from git in that directory,
+// writes it into the version file, and returns it.
+// If there are no tags or git fails, it falls back to “dev”.
 func readCurrentVersion(path string) (string, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			// File does not exist: create it with default version "dev".
+			dir := filepath.Dir(path)
+			if fromGit, gitErr := getVersionFromGitDir(dir); gitErr == nil {
+				if err := writeVersionFile(path, fromGit); err != nil {
+					return "", fmt.Errorf("failed to write version file from git tag: %w", err)
+				}
+				return fromGit, nil
+			}
+			// Fallback to dev
 			defaultVersion := "dev"
 			if err := writeVersionFile(path, defaultVersion); err != nil {
-				return "", fmt.Errorf("failed to create default version file: %v", err)
+				return "", fmt.Errorf("failed to create default version file: %w", err)
 			}
 			return defaultVersion, nil
 		}
-		return "", fmt.Errorf("failed to read version file: %v", err)
+		return "", fmt.Errorf("failed to read version file: %w", err)
 	}
-	// Look for a line like: Version = "..."
+
+	// File exists: parse out the version string
 	re := regexp.MustCompile(`Version\s*=\s*"([^"]+)"`)
-	matches := re.FindSubmatch(data)
-	if matches == nil || len(matches) < 2 {
-		return "", errors.New("failed to find version string in file")
+	if matches := re.FindSubmatch(data); matches != nil && len(matches) >= 2 {
+		return string(matches[1]), nil
 	}
-	return string(matches[1]), nil
+	return "", errors.New("failed to find version string in file")
 }
 
 // gitCommit stages the version file (plus any extra files provided),
@@ -304,12 +312,14 @@ func gitCommit(newVersion string, extraFiles []string) error {
 	return nil
 }
 
-// getVersionFromGit retrieves the most recent tag from git and removes the "v" prefix.
-func getVersionFromGit() (string, error) {
+// getVersionFromGitDir retrieves the most recent tag from git in the given directory
+// and strips off any leading "v".
+func getVersionFromGitDir(dir string) (string, error) {
 	cmd := exec.Command("git", "describe", "--tags", "--abbrev=0")
+	cmd.Dir = dir
 	out, err := cmd.Output()
 	if err != nil {
-		return "", fmt.Errorf("failed to get version from git: %v", err)
+		return "", fmt.Errorf("failed to get version from git in %q: %v", dir, err)
 	}
 	tag := strings.TrimSpace(string(out))
 	return strings.TrimPrefix(tag, "v"), nil
@@ -352,7 +362,8 @@ func Run(versionFilePath string, versionArg string, extraFiles []string) (Versio
 		newVersion = strings.TrimPrefix(bumped, "v")
 		meta.BumpType = versionArg
 	case "from-git":
-		fromGit, err := getVersionFromGit()
+		dir := filepath.Dir(versionFilePath)
+        fromGit, err := getVersionFromGitDir(dir)
 		if err != nil {
 			return meta, err
 		}
@@ -423,7 +434,8 @@ func DryRun(versionFilePath string, versionArg string) (VersionMeta, error) {
 		newVersion = strings.TrimPrefix(bumped, "v")
 		meta.BumpType = versionArg
 	case "from-git":
-		fromGit, err := getVersionFromGit()
+		dir := filepath.Dir(versionFilePath)
+        fromGit, err := getVersionFromGitDir(dir)
 		if err != nil {
 			return meta, err
 		}
