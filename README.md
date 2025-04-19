@@ -1,11 +1,14 @@
 # goversion
 [![Actions Status][action-img]][action-url]
+[![SocketDev][socket-image]][socket-url]
 [![PkgGoDev][pkg-go-dev-img]][pkg-go-dev-url]
 
 [action-img]: https://github.com/bcomnes/goversion/actions/workflows/test.yml/badge.svg
 [action-url]: https://github.com/bcomnes/goversion/actions/workflows/test.yml
 [pkg-go-dev-img]: https://pkg.go.dev/badge/github.com/bcomnes/goversion
 [pkg-go-dev-url]: https://pkg.go.dev/github.com/bcomnes/goversion
+[socket-image]: https://socket.dev/api/badge/go/package/github.com/bcomnes/goversion?version=v1.0.2
+[socket-url]: https://socket.dev/go/package/github.com/bcomnes/goversion?version=v1.0.2
 
 `goversion` is a tool and library for managing semantic version bumps in your Go projects. It bumps a `version.go` file while creating  a semantic version commit and tag.
 It is intended for use with `go tool`s that are consumed from source.
