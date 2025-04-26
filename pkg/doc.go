@@ -20,7 +20,7 @@
 //
 //	func main() {
 //	    // Bump the version by "patch".
-//	    err := goversion.Run("pkg/version/version.go", "patch", []string{"pkg/version/version.go"})
+//	    err := goversion.Run("./version.go", "patch", []string{"./version.go"})
 //	    if err != nil {
 //	        log.Fatalf("version bump failed: %v", err)
 //	    }

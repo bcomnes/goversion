@@ -37,15 +37,15 @@ go get -tool github.com/bcomnes/goversion
 
 ### Command-Line Interface
 
-The `goversion` CLI defaults to using `pkg/version.go` as the version file, but you can override this with the `-version-file` flag. Use the `-file` flag to specify additional files to be staged.
+The `goversion` CLI defaults to using `./version.go` as the version file, but you can override this with the `-version-file` flag. Use the `-file` flag to specify additional files to be staged.
 
 ```
-go tool github.com/bcomnes/goversion/cmd [flags] <version-bump>
+go tool github.com/bcomnes/goversion [flags] <version-bump>
 ```
 
 #### Flags
 
-- `-version-file`: Path to the Go file containing the version declaration. (Default: `pkg/version.go`)
+- `-version-file`: Path to the Go file containing the version declaration. (Default: `./version.go`)
 - `-file`: Additional file to include in the commit. This flag can be used multiple times.
 - `-version`: Show the version of the `goversion` CLI tool and exit.
 - `-help`: Show usage instructions.
@@ -122,7 +122,7 @@ import (
 )
 
 func main() {
-	err := pkg.Run("pkg/version/version.go", "minor", []string{"pkg/version/version.go"})
+	err := pkg.Run("./version.go", "minor", []string{"./version.go"})
 	if err != nil {
 		log.Fatalf("version bump failed: %v", err)
 	}

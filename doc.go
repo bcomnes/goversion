@@ -1,7 +1,7 @@
 // Package main implements the goversion CLI tool.
 //
 // The goversion tool is a command-line interface that automates semantic version bumping
-// for Go projects. It reads a version from a specified Go file (default "pkg/version.go"),
+// for Go projects. It reads a version from a specified Go file (default "./version.go"),
 // bumps the version according to a given directive (e.g. "patch", "minor", "major", or an
 // explicit version string), stages the change, commits it with the bumped version as the commit
 // message (without the "v" prefix), and tags the commit with the bumped version (prefixed with "v").
@@ -13,7 +13,7 @@
 // Flags:
 //
 //	-version-file: Specifies the path to the Go file containing the version declaration.
-//	               (Defaults to "pkg/version.go")
+//	               (Defaults to "./version.go")
 //	-file:         Specifies additional file(s) to be staged together with the version file.
 //	               This flag may be used multiple times.
 //	-version:      Displays the version of the goversion CLI tool and exits.
@@ -45,7 +45,7 @@
 //	goversion from-git
 //
 //	# Bump patch version and include README.md in the commit
-//	goversion -version-file=pkg/version.go -file=README.md patch
+//	goversion -version-file=./version.go -file=README.md patch
 //
 // This command bumps the patch version, updates the version file, stages the changes
 // (including README.md), commits using the new version as the commit message, and tags

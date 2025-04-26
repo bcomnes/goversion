@@ -27,7 +27,7 @@ func usage() {
 	msg := `Usage:
   goversion [options] <version-bump>
 
-Bumps the version in a Go source file (default: pkg/version.go), commits the change with the version string (no "v" prefix),
+Bumps the version in a Go source file (default: ./version.go), commits the change with the version string (no "v" prefix),
 and tags the commit with the version prefixed with "v".
 
 Examples:
@@ -45,7 +45,7 @@ Options:
 
 func main() {
 	// Define flags.
-	versionFile := flag.String("version-file", "pkg/version.go", "Path to the Go file containing the version declaration")
+	versionFile := flag.String("version-file", "./version.go", "Path to the Go file containing the version declaration")
 	var extraFiles arrayFlags
 	flag.Var(&extraFiles, "file", "Additional file to stage and commit. May be repeated.")
 	dryRun := flag.Bool("dry", false, "Perform a dry run without modifying any files or git repository")
@@ -64,7 +64,7 @@ func main() {
 	}
 
 	if *showVersion {
-		fmt.Println("goversion CLI version", goversion.Version)
+		fmt.Println("goversion CLI version", Version)
 		os.Exit(0)
 	}
 

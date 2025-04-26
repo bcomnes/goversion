@@ -7,8 +7,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-
-	goversion "github.com/bcomnes/goversion/pkg"
 )
 
 // TestMain triggers the CLI as a subprocess when GO_HELPER_PROCESS is set.
@@ -38,7 +36,7 @@ func TestCLIHelp(t *testing.T) {
 
 func TestCLIVersionFlag(t *testing.T) {
 	out, _ := runCLI([]string{"-version"})
-	if !strings.Contains(out, goversion.Version) {
+	if !strings.Contains(out, Version) {
 		t.Errorf("expected CLI version in output, got:\n%s", out)
 	}
 }

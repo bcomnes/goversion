@@ -1,4 +1,4 @@
-package integration
+package main_test
 
 import (
 	"bytes"
@@ -23,7 +23,7 @@ func TestCLIBinaryIntegration(t *testing.T) {
 	binPath := filepath.Join(tmpBuildDir, "goversion")
 	// Build the CLI binary from the main package.
 	// Since this test resides in cmd/integration, the main package is in its parent directory ("../").
-	buildCmd := exec.Command("go", "build", "-o", binPath, "../")
+	buildCmd := exec.Command("go", "build", "-o", binPath, "./")
 	buildOutput, err := buildCmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("failed to build CLI binary: %v; build output: %s", err, string(buildOutput))
