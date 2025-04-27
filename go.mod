@@ -1,4 +1,4 @@
-module github.com/bcomnes/goversion
+module github.com/bcomnes/goversion/v2
 
 go 1.24.1
 

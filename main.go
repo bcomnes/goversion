@@ -9,7 +9,7 @@ import (
 	"slices"
 	"strings"
 
-	goversion "github.com/bcomnes/goversion/pkg"
+	goversion "github.com/bcomnes/goversion/v2/pkg"
 )
 
 type arrayFlags []string
