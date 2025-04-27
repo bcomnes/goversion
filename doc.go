@@ -52,5 +52,5 @@
 // the commit with the new version.
 //
 // For more detailed API documentation, please see the documentation in the "pkg" package
-// or visit [PkgGoDev](https://pkg.go.dev/github.com/bcomnes/goversion).
+// or visit [PkgGoDev](https://pkg.go.dev/github.com/bcomnes/goversion/v2).
 package main

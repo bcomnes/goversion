@@ -5,8 +5,8 @@
 
 [action-img]: https://github.com/bcomnes/goversion/actions/workflows/test.yml/badge.svg
 [action-url]: https://github.com/bcomnes/goversion/actions/workflows/test.yml
-[pkg-go-dev-img]: https://pkg.go.dev/badge/github.com/bcomnes/goversion
-[pkg-go-dev-url]: https://pkg.go.dev/github.com/bcomnes/goversion
+[pkg-go-dev-img]: https://pkg.go.dev/badge/github.com/bcomnes/goversion/v2
+[pkg-go-dev-url]: https://pkg.go.dev/github.com/bcomnes/goversion/v2
 [socket-image]: https://socket.dev/api/badge/go/package/github.com/bcomnes/goversion?version=v1.0.2
 [socket-url]: https://socket.dev/go/package/github.com/bcomnes/goversion?version=v1.0.2
 
@@ -31,7 +31,7 @@ Install via Go modules:
 
 ```console
 # Install go version as a tool
-go get -tool github.com/bcomnes/goversion
+go get -tool github.com/bcomnes/goversion/v2
 ```
 
 ## Usage
@@ -119,7 +119,7 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/bcomnes/goversion/pkg"
+	"github.com/bcomnes/goversion/v2/pkg"
 )
 
 func main() {
