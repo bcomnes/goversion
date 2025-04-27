@@ -1,12 +1,15 @@
 package goversion
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
+
+	"golang.org/x/mod/modfile"
 )
 
 // TestNormalizeVersion validates that normalizeVersion produces the expected output.
@@ -425,4 +428,142 @@ func TestDryRun(t *testing.T) {
 	if currentVersion != initialVersion {
 		t.Errorf("DryRun should not update the file; expected version %q, got %q", initialVersion, currentVersion)
 	}
+}
+
+// TestUpdateGoModSuffix verifies that updateGoMod
+// leaves the module path unchanged for v1,
+// but appends /vN for majors ≥ 2.
+func TestUpdateGoModSuffix(t *testing.T) {
+    tmpDir, err := os.MkdirTemp("", "goversion_mod_test")
+    if err != nil {
+        t.Fatal(err)
+    }
+    defer os.RemoveAll(tmpDir)
+
+    // A minimal go.mod to start from
+    initial := `module example.com/m
+
+go 1.18
+`
+    modFile := filepath.Join(tmpDir, "go.mod")
+
+    tests := []struct {
+        newVersion         string
+        expectedModuleLine string
+    }{
+        {"1.0.0", "module example.com/m"},
+        {"2.0.0", "module example.com/m/v2"},
+        {"3.0.0", "module example.com/m/v3"},
+    }
+
+    for _, tc := range tests {
+        // Reset go.mod
+        if err := os.WriteFile(modFile, []byte(initial), 0644); err != nil {
+            t.Fatalf("writing go.mod for %q: %v", tc.newVersion, err)
+        }
+        // Run the suffix updater
+        if err := updateGoMod(tmpDir, tc.newVersion); err != nil {
+            t.Errorf("updateGoMod(%q) error: %v", tc.newVersion, err)
+            continue
+        }
+        // Read back and verify the module line
+        data, err := os.ReadFile(modFile)
+        if err != nil {
+            t.Errorf("reading go.mod for %q: %v", tc.newVersion, err)
+            continue
+        }
+        firstLine := strings.SplitN(string(data), "\n", 2)[0]
+        if firstLine != tc.expectedModuleLine {
+            t.Errorf("for version %q, got %q; want %q",
+                tc.newVersion, firstLine, tc.expectedModuleLine)
+        }
+    }
+}
+
+// TestUpdateSelfImportsIntegration ensures that after a v2 bump,
+// imports in other packages under the same module are rewritten.
+func TestUpdateSelfImportsIntegration(t *testing.T) {
+    // 1) Setup a temporary module
+    tmpDir, err := os.MkdirTemp("", "selfimports_test")
+    if err != nil {
+        t.Fatal(err)
+    }
+    defer os.RemoveAll(tmpDir)
+
+    // write go.mod for module example.com/foo
+    modContents := `module example.com/foo
+
+go 1.18
+`
+    modFile := filepath.Join(tmpDir, "go.mod")
+    if err := os.WriteFile(modFile, []byte(modContents), 0644); err != nil {
+        t.Fatalf("writing go.mod: %v", err)
+    }
+
+    // 2) Create pkg/a/a.go
+    aDir := filepath.Join(tmpDir, "pkg", "a")
+    if err := os.MkdirAll(aDir, 0755); err != nil {
+        t.Fatal(err)
+    }
+    aSrc := `package a
+
+func A() {}
+`
+    if err := os.WriteFile(filepath.Join(aDir, "a.go"), []byte(aSrc), 0644); err != nil {
+        t.Fatal(err)
+    }
+
+    // 3) Create pkg/b/b.go importing example.com/foo/pkg/a
+    bDir := filepath.Join(tmpDir, "pkg", "b")
+    if err := os.MkdirAll(bDir, 0755); err != nil {
+        t.Fatal(err)
+    }
+    bSrc := `package b
+
+import "example.com/foo/pkg/a"
+
+func B() { a.A() }
+`
+    bPath := filepath.Join(bDir, "b.go")
+    if err := os.WriteFile(bPath, []byte(bSrc), 0644); err != nil {
+        t.Fatal(err)
+    }
+
+    // 4) Bump go.mod to v2 (via updateGoMod) and re-parse new module path
+    if err := updateGoMod(tmpDir, "2.0.0"); err != nil {
+        t.Fatalf("updateGoMod failed: %v", err)
+    }
+    data, err := os.ReadFile(modFile)
+    if err != nil {
+        t.Fatalf("reading bumped go.mod: %v", err)
+    }
+    mf, err := modfile.Parse("go.mod", data, nil)
+    if err != nil {
+        t.Fatalf("parsing bumped go.mod: %v", err)
+    }
+    newModPath := mf.Module.Mod.Path // should be "example.com/foo/v2"
+
+    // 5) Rewrite self-imports and collect modified files
+    modified, err := updateSelfImports(tmpDir, "example.com/foo", newModPath)
+    if err != nil {
+        t.Fatalf("updateSelfImports failed: %v", err)
+    }
+
+    // 6) Only pkg/b/b.go should have been touched
+    if !slices.Contains(modified, bPath) {
+        t.Errorf("expected %q in modified list, got: %v", bPath, modified)
+    }
+    if slices.Contains(modified, filepath.Join(aDir, "a.go")) {
+        t.Errorf("pkg/a/a.go should not be rewritten, but was")
+    }
+
+    // 7) Verify that b.go’s import line is updated to example.com/foo/v2/pkg/a
+    out, err := os.ReadFile(bPath)
+    if err != nil {
+        t.Fatalf("reading updated b.go: %v", err)
+    }
+    wantImport := fmt.Sprintf(`import "%s/pkg/a"`, newModPath)
+    if !strings.Contains(string(out), wantImport) {
+        t.Errorf("b.go import not updated, expected %q; got:\n%s", wantImport, string(out))
+    }
 }

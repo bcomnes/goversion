@@ -3,13 +3,15 @@
 // It provides functionalities for:
 //   - Reading and writing a version file that contains a version constant.
 //   - Normalizing and parsing semantic version strings (ensuring a canonical "v" prefix).
-//   - Bumping versions using standard keywords (e.g., major, minor, patch, premajor, preminor, prepatch, prerelease, and from-git)
-//     or setting an explicit version.
-//   - Integrating with Git to stage changes, commit updates with the new version as the commit message (without the "v" prefix),
-//     and tag commits with the new version (prefixed with "v").
+//   - Bumping versions using standard keywords (e.g. major, minor, patch, premajor,
+//     preminor, prepatch, prerelease, and from-git) or setting an explicit version.
+//   - Updating the module path in go.mod for major bumps ≥ v2 (e.g. appending `/v2` for v2.0.0),
+//     while leaving go.mod unchanged for v0→v1.
+//   - Integrating with Git to stage changes, commit updates with the new version as the commit
+//     message (without the "v" prefix), and tag commits with the new version (prefixed with "v").
 //
-// This library is designed to be used both as a standalone command-line tool via the provided CLI (in the cmd folder)
-// and as a programmatic API to integrate version bumping into other Go programs.
+// This library is designed to be used both as a standalone command-line tool via the provided CLI
+// (in the cmd folder) and as a programmatic API to integrate version bumping into other Go programs.
 //
 // Usage Example:
 //

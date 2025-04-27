@@ -211,3 +211,100 @@ var (
 		t.Errorf("dry run should not create a git tag; got tags:\n%s", tagsOut)
 	}
 }
+
+func TestCLIMajorBumpIntegration(t *testing.T) {
+    tmpDir, err := os.MkdirTemp("", "goversion_cli_major_test")
+    if err != nil {
+        t.Fatal(err)
+    }
+    defer os.RemoveAll(tmpDir)
+
+    runGit := func(args ...string) {
+        cmd := exec.Command("git", args...)
+        cmd.Dir = tmpDir
+        if out, err := cmd.CombinedOutput(); err != nil {
+            t.Fatalf("git %v failed: %v\n%s", args, err, out)
+        }
+    }
+
+    // init repo + config
+    runGit("init")
+    runGit("config", "user.email", "test@example.com")
+    runGit("config", "user.name", "Test User")
+
+    // write a simple go.mod
+    modContent := `module example.com/m
+
+go 1.18
+`
+    if err := os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte(modContent), 0644); err != nil {
+        t.Fatalf("failed to write go.mod: %v", err)
+    }
+
+    // create the version file
+    versionDir := filepath.Join(tmpDir, "pkg")
+    if err := os.MkdirAll(versionDir, 0755); err != nil {
+        t.Fatalf("failed to mkdir pkg: %v", err)
+    }
+    rel := filepath.Join("pkg", "version.go")
+    abs := filepath.Join(tmpDir, rel)
+    initial := `package version
+
+var (
+    Version = "1.2.3"
+)
+`
+    if err := os.WriteFile(abs, []byte(initial), 0644); err != nil {
+        t.Fatalf("write version.go: %v", err)
+    }
+
+    // commit both files
+    runGit("add", ".")
+    runGit("commit", "-m", "initial")
+
+    // run CLI with "major"
+    cmd := exec.Command(os.Args[0], "-version-file", rel, "major")
+    cmd.Dir = tmpDir
+    cmd.Env = append(os.Environ(),
+        "GO_HELPER_PROCESS=1",
+        "GIT_AUTHOR_NAME=Test User",
+        "GIT_AUTHOR_EMAIL=test@example.com",
+        "GIT_COMMITTER_NAME=Test User",
+        "GIT_COMMITTER_EMAIL=test@example.com",
+    )
+    out, err := cmd.CombinedOutput()
+    if err != nil {
+        t.Fatalf("CLI major bump failed: %v\n%s", err, out)
+    }
+
+    // check version.go
+    got, err := os.ReadFile(abs)
+    if err != nil {
+        t.Fatalf("read version.go failed: %v", err)
+    }
+    if !strings.Contains(string(got), `Version = "2.0.0"`) {
+        t.Errorf("version.go =\n%s\nwant Version = \"2.0.0\"", got)
+    }
+
+    // check go.mod
+    modGot, err := os.ReadFile(filepath.Join(tmpDir, "go.mod"))
+    if err != nil {
+        t.Fatalf("read go.mod failed: %v", err)
+    }
+    first := strings.SplitN(string(modGot), "\n", 2)[0]
+    if !strings.Contains(first, "/v2") {
+        t.Errorf("go.mod first line = %q; want it to include \"/v2\"", first)
+    }
+
+    // check git tag
+    // check git tag
+    cmd = exec.Command("git", "tag")
+    cmd.Dir = tmpDir
+    tagsOut, err := cmd.CombinedOutput()
+    if err != nil {
+        t.Fatalf("git tag failed: %v\n%s", err, tagsOut)
+    }
+    if !strings.Contains(string(tagsOut), "v2.0.0") {
+        t.Errorf("git tags = %s; want v2.0.0", tagsOut)
+    }
+}

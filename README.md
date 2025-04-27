@@ -23,6 +23,7 @@ It is intended for use with `go tool`s that are consumed from source.
 - **Git Integration:** Automatically stages updated files, commits changes with the new version as the commit message, and tags the commit with the new version.
 - **CLI and Library:** Offers both a command-line interface for quick version updates and a library for integrating version management into your applications.
 - **Flexible Configuration:** Specify the path to your version file and include additional files for Git staging.
+- **go.mod and package self reference updates** Save yourself the hassle of updating the go.mod and pacakge self references.
 
 ## Install
 
