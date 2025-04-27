@@ -13,8 +13,6 @@ import (
 // changes the current working directory to that temporary repo before bumping
 // the version with a "patch" directive (bumping 1.2.3 to 1.2.4). The updated file
 // content is then printed out.
-//
-// Save this file as pkg/example_test.go so it is included as a testable example.
 func ExampleRun() {
 	// Create a temporary directory.
 	tmpDir, err := os.MkdirTemp("", "goversion_example")
