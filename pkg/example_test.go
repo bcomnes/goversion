@@ -82,7 +82,7 @@ func ExampleRun() {
 	}
 
 	// Call Run to bump the version ("patch" will bump 1.2.3 to 1.2.4).
-	_, err = Run(versionFile, "patch", []string{versionFile}, []string{})
+	_, err = Run(versionFile, "patch", []string{versionFile}, []string{}, "")
 	if err != nil {
 		fmt.Println("error bumping version:", err)
 		return

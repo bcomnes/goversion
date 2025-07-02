@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 
@@ -339,7 +340,7 @@ func getVersionFromGitDir(dir string) (string, error) {
 //   [<newversion> | major | minor | patch | premajor | preminor | prepatch | prerelease | from-git]
 // It now returns metadata about the operation.
 // Run bumps the version, updates go.mod for v2+ modules, rewrites self-imports, and commits the changes.
-func Run(versionFilePath, versionArg string, extraFiles []string, bumpFiles []string) (VersionMeta, error) {
+func Run(versionFilePath, versionArg string, extraFiles []string, bumpFiles []string, postBumpScript string) (VersionMeta, error) {
 	var meta VersionMeta
 
 	// 1. Ensure git is available
@@ -462,6 +463,13 @@ func Run(versionFilePath, versionArg string, extraFiles []string, bumpFiles []st
 		}
 	}
 
+	// 6.8. Run post-bump script if provided
+	if postBumpScript != "" {
+		if err := runPostBumpScript(postBumpScript, meta.OldVersion, meta.NewVersion); err != nil {
+			return meta, fmt.Errorf("post-bump script failed: %w", err)
+		}
+	}
+
 	// 7. Stage, commit, and tag
 	filesToCommit := make([]string, len(extraFiles))
 	copy(filesToCommit, extraFiles)
@@ -491,6 +499,7 @@ func Run(versionFilePath, versionArg string, extraFiles []string, bumpFiles []st
 // - the versionFilePath itself
 // - go.mod (for v2+ bumps)
 // - any .go files whose imports need rewriting.
+// - any files that would be processed by bump-file flags.
 func DryRun(versionFilePath, versionArg string, bumpFiles []string) (VersionMeta, error) {
     var meta VersionMeta
 
@@ -782,4 +791,49 @@ func updateSelfImports(modDir, oldMod, newMod string) ([]string, error) {
 	})
 
 	return modified, err
+}
+
+// runPostBumpScript executes the post-bump script with version information in environment variables.
+func runPostBumpScript(scriptPath, oldVersion, newVersion string) error {
+	// Check if script exists and is executable
+	info, err := os.Stat(scriptPath)
+	if err != nil {
+		return fmt.Errorf("script not found: %w", err)
+	}
+
+	// On Unix systems, check if executable
+	if info.Mode()&0111 == 0 && runtime.GOOS != "windows" {
+		return fmt.Errorf("script is not executable: %s", scriptPath)
+	}
+
+	// Prepare the command
+	cmd := exec.Command(scriptPath)
+
+	// Set environment variables
+	cmd.Env = append(os.Environ(),
+		fmt.Sprintf("GOVERSION_OLD_VERSION=%s", oldVersion),
+		fmt.Sprintf("GOVERSION_NEW_VERSION=%s", newVersion),
+	)
+
+	// Capture output
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	// Run the script
+	err = cmd.Run()
+
+	// Always print output if there is any
+	if stdout.Len() > 0 {
+		fmt.Print(stdout.String())
+	}
+	if stderr.Len() > 0 {
+		fmt.Fprint(os.Stderr, stderr.String())
+	}
+
+	if err != nil {
+		return fmt.Errorf("script execution failed: %w", err)
+	}
+
+	return nil
 }

@@ -205,7 +205,7 @@ func TestGitIntegration(t *testing.T) {
 
 	// Run the version bump. For example, bump the "patch" version.
 	// Pass the version file path to Run and also include it in the extra files list.
-	if _, err := Run(versionFilePath, "patch", []string{versionFilePath}, []string{}); err != nil {
+	if _, err := Run(versionFilePath, "patch", []string{versionFilePath}, []string{}, ""); err != nil {
 		t.Fatalf("Run failed: %v", err)
 	}
 
@@ -289,7 +289,7 @@ func TestExplicitVersion(t *testing.T) {
 
 	// Run with an explicit version (e.g., bumping directly to 2.0.0).
 	explicitVersion := "2.0.0"
-	if _, err := Run(versionFilePath, explicitVersion, []string{versionFilePath}, []string{}); err != nil {
+	if _, err := Run(versionFilePath, explicitVersion, []string{versionFilePath}, []string{}, ""); err != nil {
 		t.Fatalf("Run with explicit version failed: %v", err)
 	}
 
@@ -380,7 +380,7 @@ func TestRejectsDirtyWorkingDir(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err = Run(versionPath, "patch", []string{versionPath}, []string{})
+	_, err = Run(versionPath, "patch", []string{versionPath}, []string{}, "")
 	if err == nil || !strings.Contains(err.Error(), "working directory is dirty") {
 		t.Errorf("expected error due to dirty working directory, got: %v", err)
 	}
@@ -925,7 +925,7 @@ serde = "1.0.130"`
 	}
 
 	// Run with bump files
-	meta, err := Run(versionFile, "minor", []string{versionFile}, []string{packageFile, cargoFile})
+	meta, err := Run(versionFile, "minor", []string{versionFile}, []string{packageFile, cargoFile}, "")
 	if err != nil {
 		t.Fatalf("Run failed: %v", err)
 	}
@@ -1019,5 +1019,204 @@ func TestDryRunWithBumpFiles(t *testing.T) {
 	content, _ := os.ReadFile(bumpFile)
 	if !strings.Contains(string(content), `version = "1.0.0"`) {
 		t.Errorf("bump file was modified during dry run")
+	}
+}
+
+// TestPostBumpScript tests the post-bump script functionality.
+func TestPostBumpScript(t *testing.T) {
+	if err := checkGit(); err != nil {
+		t.Skip("git is not available on system")
+	}
+
+	// Create temp directory
+	tmpDir, err := os.MkdirTemp("", "goversion_postbump_test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// Initialize git repo
+	cmd := exec.Command("git", "init")
+	cmd.Dir = tmpDir
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git init failed: %v, output: %s", err, string(output))
+	}
+
+	// Configure git
+	configCmds := [][]string{
+		{"git", "config", "user.email", "test@example.com"},
+		{"git", "config", "user.name", "Test User"},
+	}
+	for _, args := range configCmds {
+		cmd := exec.Command(args[0], args[1:]...)
+		cmd.Dir = tmpDir
+		if output, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git config failed: %v, output: %s", err, string(output))
+		}
+	}
+
+	// Create version.go
+	versionFile := filepath.Join(tmpDir, "version.go")
+	if err := writeVersionFile(versionFile, "1.0.0"); err != nil {
+		t.Fatalf("writeVersionFile failed: %v", err)
+	}
+
+	// Create a simple post-bump script that creates a file with version info
+	scriptPath := filepath.Join(tmpDir, "post-bump.sh")
+	scriptContent := `#!/bin/sh
+echo "Old: $GOVERSION_OLD_VERSION" > version-info.txt
+echo "New: $GOVERSION_NEW_VERSION" >> version-info.txt
+echo "Post-bump script executed"
+`
+	if err := os.WriteFile(scriptPath, []byte(scriptContent), 0755); err != nil {
+		t.Fatalf("failed to write post-bump script: %v", err)
+	}
+
+	// Stage and commit initial files
+	cmd = exec.Command("git", "add", ".")
+	cmd.Dir = tmpDir
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git add failed: %v, output: %s", err, string(output))
+	}
+	cmd = exec.Command("git", "commit", "-m", "initial commit")
+	cmd.Dir = tmpDir
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git commit failed: %v, output: %s", err, string(output))
+	}
+
+	// Change working directory
+	origDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(origDir)
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatal(err)
+	}
+
+	// Run with post-bump script
+	versionInfoPath := filepath.Join(tmpDir, "version-info.txt")
+	meta, err := Run(versionFile, "minor", []string{versionFile, versionInfoPath}, []string{}, scriptPath)
+	if err != nil {
+		t.Fatalf("Run failed: %v", err)
+	}
+
+	// Verify version was bumped
+	if meta.NewVersion != "1.1.0" {
+		t.Errorf("expected NewVersion 1.1.0, got %s", meta.NewVersion)
+	}
+
+	// Verify post-bump script created the file
+	content, err := os.ReadFile(versionInfoPath)
+	if err != nil {
+		t.Fatalf("post-bump script did not create expected file: %v", err)
+	}
+
+	expectedContent := "Old: 1.0.0\nNew: 1.1.0\n"
+	if string(content) != expectedContent {
+		t.Errorf("version-info.txt content mismatch\ngot:\n%s\nwant:\n%s", content, expectedContent)
+	}
+
+	// Verify git tag was created
+	cmd = exec.Command("git", "tag")
+	cmd.Dir = tmpDir
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git tag failed: %v, output: %s", err, string(output))
+	}
+	if !strings.Contains(string(output), "v1.1.0") {
+		t.Errorf("expected git tag v1.1.0 not found; got tags: %v", string(output))
+	}
+}
+
+// TestPostBumpScriptFailure tests that a failing post-bump script aborts the operation.
+func TestPostBumpScriptFailure(t *testing.T) {
+	if err := checkGit(); err != nil {
+		t.Skip("git is not available on system")
+	}
+
+	// Create temp directory
+	tmpDir, err := os.MkdirTemp("", "goversion_postbump_fail_test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// Initialize git repo
+	cmd := exec.Command("git", "init")
+	cmd.Dir = tmpDir
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git init failed: %v, output: %s", err, string(output))
+	}
+
+	// Configure git
+	configCmds := [][]string{
+		{"git", "config", "user.email", "test@example.com"},
+		{"git", "config", "user.name", "Test User"},
+	}
+	for _, args := range configCmds {
+		cmd := exec.Command(args[0], args[1:]...)
+		cmd.Dir = tmpDir
+		if output, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git config failed: %v, output: %s", err, string(output))
+		}
+	}
+
+	// Create version.go
+	versionFile := filepath.Join(tmpDir, "version.go")
+	if err := writeVersionFile(versionFile, "1.0.0"); err != nil {
+		t.Fatalf("writeVersionFile failed: %v", err)
+	}
+
+	// Create a post-bump script that fails
+	scriptPath := filepath.Join(tmpDir, "failing-script.sh")
+	scriptContent := `#!/bin/sh
+echo "This script will fail" >&2
+exit 1
+`
+	if err := os.WriteFile(scriptPath, []byte(scriptContent), 0755); err != nil {
+		t.Fatalf("failed to write failing script: %v", err)
+	}
+
+	// Stage and commit initial files
+	cmd = exec.Command("git", "add", ".")
+	cmd.Dir = tmpDir
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git add failed: %v, output: %s", err, string(output))
+	}
+	cmd = exec.Command("git", "commit", "-m", "initial commit")
+	cmd.Dir = tmpDir
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git commit failed: %v, output: %s", err, string(output))
+	}
+
+	// Change working directory
+	origDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(origDir)
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatal(err)
+	}
+
+	// Run with failing post-bump script
+	_, err = Run(versionFile, "patch", []string{versionFile}, []string{}, scriptPath)
+	if err == nil {
+		t.Errorf("expected error from failing post-bump script, got none")
+	}
+	if !strings.Contains(err.Error(), "post-bump script failed") {
+		t.Errorf("expected 'post-bump script failed' error, got: %v", err)
+	}
+
+	// Verify no git tag was created
+	cmd = exec.Command("git", "tag")
+	cmd.Dir = tmpDir
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git tag failed: %v, output: %s", err, string(output))
+	}
+	if strings.Contains(string(output), "v1.0.1") {
+		t.Errorf("git tag should not have been created after script failure")
 	}
 }

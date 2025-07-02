@@ -34,6 +34,7 @@ Examples:
   goversion minor
   goversion 1.2.3
   goversion -bump-file package.json -bump-file Cargo.toml patch
+  goversion -post-bump ./scripts/update-docs.sh -file docs/version.md patch
 
 Positional arguments:
   <version-bump>     One of: major, minor, patch, premajor, preminor, prepatch, prerelease, from-git, or an explicit version like 1.2.3
@@ -51,6 +52,7 @@ func main() {
 	flag.Var(&extraFiles, "file", "Additional file to stage and commit. May be repeated.")
 	var bumpFiles arrayFlags
 	flag.Var(&bumpFiles, "bump-file", "Additional file to scan for first semver and bump it. May be repeated.")
+	postBump := flag.String("post-bump", "", "Script to execute after version bump but before git commit. Receives GOVERSION_OLD_VERSION and GOVERSION_NEW_VERSION env vars.")
 	dryRun := flag.Bool("dry", false, "Perform a dry run without modifying any files or git repository")
 	showVersion := flag.Bool("version", false, "Show CLI version and exit")
 	help := flag.Bool("help", false, "Show help message and exit")
@@ -95,7 +97,7 @@ func main() {
 	if *dryRun {
 		meta, err = goversion.DryRun(*versionFile, versionArg, bumpFiles)
 	} else {
-		meta, err = goversion.Run(*versionFile, versionArg, extraFiles, bumpFiles)
+		meta, err = goversion.Run(*versionFile, versionArg, extraFiles, bumpFiles, *postBump)
 	}
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "Error:", err)

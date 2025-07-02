@@ -382,3 +382,145 @@ tokio = { version = "1.21.0", features = ["full"] }`
 		t.Errorf("expected git tag v1.3.0 not found; got tags: %v", tags)
 	}
 }
+
+// TestCLIPostBumpIntegration tests the -post-bump flag functionality.
+func TestCLIPostBumpIntegration(t *testing.T) {
+	// Build the CLI binary
+	tmpBuildDir, err := os.MkdirTemp("", "goversion_postbump_build")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(tmpBuildDir)
+
+	binPath := filepath.Join(tmpBuildDir, "goversion")
+	buildCmd := exec.Command("go", "build", "-o", binPath, "./")
+	if out, err := buildCmd.CombinedOutput(); err != nil {
+		t.Fatalf("failed to build CLI binary: %v; output: %s", err, out)
+	}
+
+	// Set up test repository
+	tmpRepo, err := os.MkdirTemp("", "goversion_postbump_cli_test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(tmpRepo)
+
+	// Initialize git
+	initCmd := exec.Command("git", "init")
+	initCmd.Dir = tmpRepo
+	if output, err := initCmd.CombinedOutput(); err != nil {
+		t.Fatalf("git init failed: %v; output: %s", err, string(output))
+	}
+
+	// Configure git
+	configCmds := [][]string{
+		{"git", "config", "user.email", "test@example.com"},
+		{"git", "config", "user.name", "Test User"},
+	}
+	for _, args := range configCmds {
+		cmd := exec.Command(args[0], args[1:]...)
+		cmd.Dir = tmpRepo
+		if output, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git config failed: %v; output: %s", err, string(output))
+		}
+	}
+
+	// Create version.go
+	versionFile := filepath.Join(tmpRepo, "version.go")
+	versionContent := `package main
+
+var (
+	Version = "1.0.0"
+)
+`
+	if err := os.WriteFile(versionFile, []byte(versionContent), 0644); err != nil {
+		t.Fatalf("failed to write version file: %v", err)
+	}
+
+	// Create a post-bump script that generates a file
+	scriptFile := filepath.Join(tmpRepo, "update-docs.sh")
+	scriptContent := `#!/bin/sh
+cat > VERSION.md << EOF
+# Version Information
+Current Version: $GOVERSION_NEW_VERSION
+Previous Version: $GOVERSION_OLD_VERSION
+EOF
+echo "Generated VERSION.md"
+`
+	if err := os.WriteFile(scriptFile, []byte(scriptContent), 0755); err != nil {
+		t.Fatalf("failed to write post-bump script: %v", err)
+	}
+
+	// Stage and commit initial files
+	gitAddCmd := exec.Command("git", "add", ".")
+	gitAddCmd.Dir = tmpRepo
+	if output, err := gitAddCmd.CombinedOutput(); err != nil {
+		t.Fatalf("git add failed: %v; output: %s", err, string(output))
+	}
+	gitCommitCmd := exec.Command("git", "commit", "-m", "initial commit")
+	gitCommitCmd.Dir = tmpRepo
+	if output, err := gitCommitCmd.CombinedOutput(); err != nil {
+		t.Fatalf("git commit failed: %v; output: %s", err, string(output))
+	}
+
+	// Run CLI with post-bump flag and -file for the generated VERSION.md
+	cliCmd := exec.Command(binPath, "-version-file", versionFile, "-post-bump", scriptFile, "-file", filepath.Join(tmpRepo, "VERSION.md"), "minor")
+	cliCmd.Dir = tmpRepo
+	var stdout, stderr bytes.Buffer
+	cliCmd.Stdout = &stdout
+	cliCmd.Stderr = &stderr
+	if err := cliCmd.Run(); err != nil {
+		t.Fatalf("CLI command failed: %v; stdout: %s; stderr: %s", err, stdout.String(), stderr.String())
+	}
+
+	// Verify the script output was shown
+	if !strings.Contains(stdout.String(), "Generated VERSION.md") {
+		t.Errorf("expected script output in stdout; got: %s", stdout.String())
+	}
+
+	// Verify version.go was updated
+	versionResult, err := os.ReadFile(versionFile)
+	if err != nil {
+		t.Fatalf("failed to read version file: %v", err)
+	}
+	if !strings.Contains(string(versionResult), `Version = "1.1.0"`) {
+		t.Errorf("version.go not updated correctly; got:\n%s", versionResult)
+	}
+
+	// Verify VERSION.md was created by the script
+	versionMdPath := filepath.Join(tmpRepo, "VERSION.md")
+	versionMdContent, err := os.ReadFile(versionMdPath)
+	if err != nil {
+		t.Fatalf("VERSION.md not created by post-bump script: %v", err)
+	}
+	expectedContent := `# Version Information
+Current Version: 1.1.0
+Previous Version: 1.0.0
+`
+	if string(versionMdContent) != expectedContent {
+		t.Errorf("VERSION.md content mismatch; got:\n%s\nwant:\n%s", versionMdContent, expectedContent)
+	}
+
+	// Verify git tag
+	gitTagCmd := exec.Command("git", "tag")
+	gitTagCmd.Dir = tmpRepo
+	tagOutput, err := gitTagCmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git tag command failed: %v; output: %s", err, string(tagOutput))
+	}
+	tags := strings.Split(strings.TrimSpace(string(tagOutput)), "\n")
+	if !slices.Contains(tags, "v1.1.0") {
+		t.Errorf("expected git tag v1.1.0 not found; got tags: %v", tags)
+	}
+
+	// Verify VERSION.md was committed
+	logCmd := exec.Command("git", "log", "--name-only", "--oneline", "-1")
+	logCmd.Dir = tmpRepo
+	logOutput, err := logCmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git log failed: %v; output: %s", err, string(logOutput))
+	}
+	if !strings.Contains(string(logOutput), "VERSION.md") {
+		t.Errorf("VERSION.md was not included in commit; log output:\n%s", logOutput)
+	}
+}
