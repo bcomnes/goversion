@@ -24,6 +24,8 @@ It is intended for use with `go tool`s that are consumed from source.
 - **CLI and Library:** Offers both a command-line interface for quick version updates and a library for integrating version management into your applications.
 - **Flexible Configuration:** Specify the path to your version file and include additional files for Git staging.
 - **go.mod and package self reference updates** Save yourself the hassle of updating the go.mod and pacakge self references.
+- **Generic Version Bumping:** Bump versions in any text file (package.json, Cargo.toml, etc.) by finding and replacing the first semantic version.
+- **Post-bump Hooks:** Run custom scripts after version bumping but before committing, with access to old and new version via environment variables.
 
 ## Install
 
@@ -48,6 +50,8 @@ go tool github.com/bcomnes/goversion [flags] <version-bump>
 
 - `-version-file`: Path to the Go file containing the version declaration. (Default: `./version.go`)
 - `-file`: Additional file to include in the commit. This flag can be used multiple times.
+- `-bump-file`: Additional file to scan for the first semantic version and bump it. This flag can be used multiple times. Only valid semver strings are matched (no "v" prefix).
+- `-post-bump`: Script to execute after version bump but before git commit. Receives `GOVERSION_OLD_VERSION` and `GOVERSION_NEW_VERSION` environment variables. Files created or modified by the script must be specified with `-file` to be included in the commit.
 - `-version`: Show the version of the `goversion` CLI tool and exit.
 - `-help`: Show usage instructions.
 
@@ -71,6 +75,27 @@ The `<version-bump>` argument can be:
   - `1.2.3` – set exact version
   - `2.0.0-alpha.1` – set prerelease version
   - `dev` – special non-semver string that initializes the version file (used for bootstrapping)
+
+#### Generic Version Bumping
+
+The `-bump-file` flag allows you to bump versions in any text file by finding and replacing the first valid semantic version:
+
+- Only matches strict semver format (no "v" prefix)
+- Replaces only the first occurrence
+- Works with any file format (JSON, TOML, YAML, etc.)
+- Common use cases: package.json, Cargo.toml, pyproject.toml, extension manifests
+
+#### Post-bump Scripts
+
+The `-post-bump` flag runs a script after version bumping but before committing:
+
+- Script receives environment variables:
+  - `GOVERSION_OLD_VERSION` - the version before bumping
+  - `GOVERSION_NEW_VERSION` - the new version after bumping
+- Script output is displayed to the user
+- If the script fails, the entire operation is aborted
+- Files created/modified by the script must be explicitly included with `-file`
+- Common use cases: generating docs, updating changelogs, building artifacts
 
 #### Examples
 
@@ -98,6 +123,16 @@ goversion -file=README.md patch
 
 # Use a custom version file path
 goversion -version-file=internal/version.go minor
+
+# Bump version in package.json and Cargo.toml
+goversion -bump-file=package.json -bump-file=Cargo.toml patch
+
+# Run a post-bump script that generates docs
+# Note: Files created by the script must be included with -file
+goversion -post-bump=./scripts/update-docs.sh -file=docs/version.md minor
+
+# Combine multiple features
+goversion -version-file=./version.go -bump-file=package.json -post-bump=./update.sh -file=CHANGELOG.md patch
 ```
 
 This command will:
@@ -105,6 +140,7 @@ This command will:
 - Stage the updated version file (plus any `-file` flags).
 - Commit with the new version as the commit message (no `v` prefix).
 - Tag the commit with the new version (with `v` prefix).
+- For major version bumps ≥ v2, update go.mod module path and rewrite self-imports.
 
 > **Note**: The working directory must be clean (no unstaged/uncommitted changes outside the listed files) or the command will fail to prevent accidental commits.
 
@@ -123,11 +159,26 @@ import (
 )
 
 func main() {
-	err := pkg.Run("./version.go", "minor", []string{"./version.go"})
+	// Basic version bump
+	meta, err := goversion.Run("./version.go", "minor", []string{"./version.go"}, []string{}, "")
 	if err != nil {
 		log.Fatalf("version bump failed: %v", err)
 	}
-	fmt.Println("Version bumped successfully!")
+	fmt.Printf("Bumped from %s to %s\n", meta.OldVersion, meta.NewVersion)
+
+	// With additional files to bump
+	bumpFiles := []string{"package.json", "Cargo.toml"}
+	meta, err = goversion.Run("./version.go", "patch", []string{"./version.go"}, bumpFiles, "")
+	if err != nil {
+		log.Fatalf("version bump failed: %v", err)
+	}
+
+	// Dry run to see what would change
+	meta, err = goversion.DryRun("./version.go", "major", []string{"package.json"})
+	if err != nil {
+		log.Fatalf("dry run failed: %v", err)
+	}
+	fmt.Printf("Would update files: %v\n", meta.UpdatedFiles)
 }
 ```
 
