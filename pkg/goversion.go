@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -339,7 +340,7 @@ func getVersionFromGitDir(dir string) (string, error) {
 //   [<newversion> | major | minor | patch | premajor | preminor | prepatch | prerelease | from-git]
 // It now returns metadata about the operation.
 // Run bumps the version, updates go.mod for v2+ modules, rewrites self-imports, and commits the changes.
-func Run(versionFilePath, versionArg string, extraFiles []string) (VersionMeta, error) {
+func Run(versionFilePath, versionArg string, extraFiles []string, bumpInFiles []string) (VersionMeta, error) {
 	var meta VersionMeta
 
 	// 1. Ensure git is available
@@ -395,6 +396,13 @@ func Run(versionFilePath, versionArg string, extraFiles []string) (VersionMeta, 
 	copy(allowed, extraFiles)
 	allowed = append(allowed, versionFilePath)
 
+	// Add bump-in files to allowed list
+	for _, f := range bumpInFiles {
+		if !slices.Contains(allowed, f) {
+			allowed = append(allowed, f)
+		}
+	}
+
 	// Detect module for major bumps
 	var modDir, oldModPath string
 	if meta.BumpType == "major" {
@@ -422,6 +430,18 @@ func Run(versionFilePath, versionArg string, extraFiles []string) (VersionMeta, 
 	// 6. Write version file
 	if err := writeVersionFile(versionFilePath, meta.NewVersion); err != nil {
 		return meta, err
+	}
+
+	// 6.1. Bump versions in additional files
+	var bumpedFiles []string
+	for _, bumpFile := range bumpInFiles {
+		bumped, err := BumpVersionInFile(bumpFile, meta.NewVersion)
+		if err != nil {
+			return meta, fmt.Errorf("failed to bump version in %s: %w", bumpFile, err)
+		}
+		if bumped {
+			bumpedFiles = append(bumpedFiles, bumpFile)
+		}
 	}
 
 	// 6.5. Update go.mod if needed
@@ -459,11 +479,13 @@ func Run(versionFilePath, versionArg string, extraFiles []string) (VersionMeta, 
 		filesToCommit = append(filesToCommit, filepath.Join(modDir, "go.mod"))
 	}
 	filesToCommit = append(filesToCommit, rewritten...)
+	filesToCommit = append(filesToCommit, bumpedFiles...)
 	if err := gitCommit(meta.NewVersion, filesToCommit); err != nil {
 		return meta, err
 	}
 
 	meta.UpdatedFiles = append([]string{versionFilePath}, rewritten...)
+	meta.UpdatedFiles = append(meta.UpdatedFiles, bumpedFiles...)
 	if modDir != "" {
 	  meta.UpdatedFiles = append([]string{filepath.Join(modDir, "go.mod")}, meta.UpdatedFiles...)
 	}
@@ -478,7 +500,7 @@ func Run(versionFilePath, versionArg string, extraFiles []string) (VersionMeta, 
 // - the versionFilePath itself
 // - go.mod (for v2+ bumps)
 // - any .go files whose imports need rewriting.
-func DryRun(versionFilePath, versionArg string) (VersionMeta, error) {
+func DryRun(versionFilePath, versionArg string, bumpInFiles []string) (VersionMeta, error) {
     var meta VersionMeta
 
     // 1. Read current version
@@ -550,6 +572,14 @@ func DryRun(versionFilePath, versionArg string) (VersionMeta, error) {
             if more, err := scanSelfImports(modDir, oldMod, newMod); err == nil {
                 files = append(files, more...)
             }
+        }
+    }
+
+    // 6. Check bump-in files
+    for _, bumpFile := range bumpInFiles {
+        matches, err := ScanVersionInFile(bumpFile)
+        if err == nil && len(matches) > 0 {
+            files = append(files, bumpFile)
         }
     }
 

@@ -33,6 +33,8 @@ and tags the commit with the version prefixed with "v". For major version bumps 
 Examples:
   goversion minor
   goversion 1.2.3
+  goversion -bump-in=package.json patch
+  goversion -bump-in=README.md -bump-in=package.json minor
 
 Positional arguments:
   <version-bump>     One of: major, minor, patch, premajor, preminor, prepatch, prerelease, from-git, or an explicit version like 1.2.3
@@ -48,6 +50,8 @@ func main() {
 	versionFile := flag.String("version-file", "./version.go", "Path to the Go file containing the version declaration")
 	var extraFiles arrayFlags
 	flag.Var(&extraFiles, "file", "Additional file to stage and commit. May be repeated.")
+	var bumpInFiles arrayFlags
+	flag.Var(&bumpInFiles, "bump-in", "File to find and bump version numbers in. May be repeated.")
 	dryRun := flag.Bool("dry", false, "Perform a dry run without modifying any files or git repository")
 	showVersion := flag.Bool("version", false, "Show CLI version and exit")
 	help := flag.Bool("help", false, "Show help message and exit")
@@ -86,13 +90,20 @@ func main() {
 		extraFiles = append(extraFiles, *versionFile)
 	}
 
+	// Add bump-in files to extraFiles so they're staged
+	for _, f := range bumpInFiles {
+		if !slices.Contains(extraFiles, f) {
+			extraFiles = append(extraFiles, f)
+		}
+	}
+
 	var meta goversion.VersionMeta
 	var err error
 
 	if *dryRun {
-		meta, err = goversion.DryRun(*versionFile, versionArg)
+		meta, err = goversion.DryRun(*versionFile, versionArg, bumpInFiles)
 	} else {
-		meta, err = goversion.Run(*versionFile, versionArg, extraFiles)
+		meta, err = goversion.Run(*versionFile, versionArg, extraFiles, bumpInFiles)
 	}
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "Error:", err)

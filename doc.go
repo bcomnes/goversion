@@ -16,6 +16,10 @@
 //	               (Defaults to "./version.go")
 //	-file:         Specifies additional file(s) to be staged together with the version file.
 //	               This flag may be used multiple times.
+//	-bump-in:      Specifies file(s) to search for version numbers and bump them to match the new version.
+//	               This flag may be used multiple times. Version patterns like "version: 1.2.3",
+//	               "VERSION=1.2.3", JSON version fields, TOML version fields (extension.toml, Cargo.toml,
+//	               pyproject.toml), XML version tags, and other common formats are supported.
 //	-version:      Displays the version of the goversion CLI tool and exits.
 //
 // Examples:
@@ -46,6 +50,15 @@
 //
 //	# Bump patch version and include README.md in the commit
 //	goversion -version-file=./version.go -file=README.md patch
+//
+//	# Bump version and also update version in package.json
+//	goversion -bump-in=package.json patch
+//
+//	# Bump version in multiple files
+//	goversion -bump-in=package.json -bump-in=README.md -bump-in=docs/conf.py minor
+//
+//	# Bump version in extension.toml and other TOML files
+//	goversion -bump-in=extension.toml -bump-in=Cargo.toml -bump-in=pyproject.toml patch
 //
 // This command bumps the patch version, updates the version file, stages the changes
 // (including README.md), commits using the new version as the commit message, and tags

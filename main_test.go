@@ -308,3 +308,256 @@ var (
         t.Errorf("git tags = %s; want v2.0.0", tagsOut)
     }
 }
+
+func TestCLIBumpInFlagIntegration(t *testing.T) {
+	if err := exec.Command("git", "--version").Run(); err != nil {
+		t.Skip("git is not available on system")
+	}
+
+	tmpDir, err := os.MkdirTemp("", "goversion_cli_bumpin_test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	runGit := func(args ...string) {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = tmpDir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v failed: %v\n%s", args, err, out)
+		}
+	}
+
+	// Init repo and config user
+	runGit("init")
+	runGit("config", "user.email", "test@example.com")
+	runGit("config", "user.name", "Test User")
+
+	// Create version.go
+	versionFile := filepath.Join(tmpDir, "version.go")
+	versionContent := `package main
+
+var (
+	Version = "1.0.0"
+)
+`
+	if err := os.WriteFile(versionFile, []byte(versionContent), 0644); err != nil {
+		t.Fatalf("failed to write version file: %v", err)
+	}
+
+	// Create package.json
+	packageFile := filepath.Join(tmpDir, "package.json")
+	packageContent := `{
+  "name": "test-app",
+  "version": "1.0.0",
+  "description": "Test"
+}`
+	if err := os.WriteFile(packageFile, []byte(packageContent), 0644); err != nil {
+		t.Fatalf("failed to write package.json: %v", err)
+	}
+
+	// Create README.md
+	readmeFile := filepath.Join(tmpDir, "README.md")
+	readmeContent := `# Test App
+
+Current version: v1.0.0
+
+Install with: npm install test-app@1.0.0`
+	if err := os.WriteFile(readmeFile, []byte(readmeContent), 0644); err != nil {
+		t.Fatalf("failed to write README.md: %v", err)
+	}
+
+	// Commit initial files
+	runGit("add", ".")
+	runGit("commit", "-m", "initial")
+
+	// Run CLI with bump-in flags
+	cmd := exec.Command(os.Args[0],
+		"-version-file", "version.go",
+		"-bump-in", "package.json",
+		"-bump-in", "README.md",
+		"minor")
+	cmd.Dir = tmpDir
+	cmd.Env = append(os.Environ(), "GO_HELPER_PROCESS=1",
+		"GIT_AUTHOR_NAME=Test User",
+		"GIT_AUTHOR_EMAIL=test@example.com",
+		"GIT_COMMITTER_NAME=Test User",
+		"GIT_COMMITTER_EMAIL=test@example.com",
+	)
+
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("CLI failed: %v\nOutput:\n%s", err, out)
+	}
+
+	// Check version.go was updated
+	versionData, err := os.ReadFile(versionFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(versionData), `Version = "1.1.0"`) {
+		t.Errorf("version.go not updated to 1.1.0:\n%s", versionData)
+	}
+
+	// Check package.json was updated
+	packageData, err := os.ReadFile(packageFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(packageData), `"version": "1.1.0"`) {
+		t.Errorf("package.json not updated to 1.1.0:\n%s", packageData)
+	}
+
+	// Check README.md was updated
+	readmeData, err := os.ReadFile(readmeFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(readmeData), "Current version: v1.1.0") {
+		t.Errorf("README.md version with v prefix not updated:\n%s", readmeData)
+	}
+	if !strings.Contains(string(readmeData), "npm install test-app@1.1.0") {
+		t.Errorf("README.md version without v prefix not updated:\n%s", readmeData)
+	}
+
+	// Check git tag
+	cmd = exec.Command("git", "tag")
+	cmd.Dir = tmpDir
+	tagsOut, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git tag failed: %v\n%s", err, tagsOut)
+	}
+	if !strings.Contains(string(tagsOut), "v1.1.0") {
+		t.Errorf("expected tag 'v1.1.0' not found. Tags:\n%s", tagsOut)
+	}
+}
+
+func TestCLIExtensionTOMLIntegration(t *testing.T) {
+	if err := exec.Command("git", "--version").Run(); err != nil {
+		t.Skip("git is not available on system")
+	}
+
+	tmpDir, err := os.MkdirTemp("", "goversion_cli_extension_test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	runGit := func(args ...string) {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = tmpDir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v failed: %v\n%s", args, err, out)
+		}
+	}
+
+	// Init repo and config user
+	runGit("init")
+	runGit("config", "user.email", "test@example.com")
+	runGit("config", "user.name", "Test User")
+
+	// Create version.go
+	versionFile := filepath.Join(tmpDir, "version.go")
+	versionContent := `package main
+
+var (
+	Version = "0.3.2"
+)
+`
+	if err := os.WriteFile(versionFile, []byte(versionContent), 0644); err != nil {
+		t.Fatalf("failed to write version file: %v", err)
+	}
+
+	// Create extension.toml
+	extensionFile := filepath.Join(tmpDir, "extension.toml")
+	extensionContent := `[package]
+name = "my-extension"
+version = "0.3.2"
+description = "A test extension"
+authors = ["Test Author"]
+
+[repository]
+type = "git"
+url = "https://github.com/test/extension"
+
+[engines]
+vscode = "^1.74.0"`
+	if err := os.WriteFile(extensionFile, []byte(extensionContent), 0644); err != nil {
+		t.Fatalf("failed to write extension.toml: %v", err)
+	}
+
+	// Create pyproject.toml as another TOML example
+	pyprojectFile := filepath.Join(tmpDir, "pyproject.toml")
+	pyprojectContent := `[tool.poetry]
+name = "my-python-project"
+version = "0.3.2"
+description = "Test Python project"
+authors = ["Test Author <test@example.com>"]
+
+[tool.poetry.dependencies]
+python = "^3.9"`
+	if err := os.WriteFile(pyprojectFile, []byte(pyprojectContent), 0644); err != nil {
+		t.Fatalf("failed to write pyproject.toml: %v", err)
+	}
+
+	// Commit initial files
+	runGit("add", ".")
+	runGit("commit", "-m", "initial")
+
+	// Run CLI with bump-in flags for TOML files
+	cmd := exec.Command(os.Args[0],
+		"-version-file", "version.go",
+		"-bump-in", "extension.toml",
+		"-bump-in", "pyproject.toml",
+		"patch")
+	cmd.Dir = tmpDir
+	cmd.Env = append(os.Environ(), "GO_HELPER_PROCESS=1",
+		"GIT_AUTHOR_NAME=Test User",
+		"GIT_AUTHOR_EMAIL=test@example.com",
+		"GIT_COMMITTER_NAME=Test User",
+		"GIT_COMMITTER_EMAIL=test@example.com",
+	)
+
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("CLI failed: %v\nOutput:\n%s", err, out)
+	}
+
+	// Check version.go was updated
+	versionData, err := os.ReadFile(versionFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(versionData), `Version = "0.3.3"`) {
+		t.Errorf("version.go not updated to 0.3.3:\n%s", versionData)
+	}
+
+	// Check extension.toml was updated
+	extensionData, err := os.ReadFile(extensionFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(extensionData), `version = "0.3.3"`) {
+		t.Errorf("extension.toml not updated to 0.3.3:\n%s", extensionData)
+	}
+
+	// Check pyproject.toml was updated
+	pyprojectData, err := os.ReadFile(pyprojectFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(pyprojectData), `version = "0.3.3"`) {
+		t.Errorf("pyproject.toml not updated to 0.3.3:\n%s", pyprojectData)
+	}
+
+	// Check git tag
+	cmd = exec.Command("git", "tag")
+	cmd.Dir = tmpDir
+	tagsOut, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git tag failed: %v\n%s", err, tagsOut)
+	}
+	if !strings.Contains(string(tagsOut), "v0.3.3") {
+		t.Errorf("expected tag 'v0.3.3' not found. Tags:\n%s", tagsOut)
+	}
+}
