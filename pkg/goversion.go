@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 
@@ -339,7 +340,7 @@ func getVersionFromGitDir(dir string) (string, error) {
 //   [<newversion> | major | minor | patch | premajor | preminor | prepatch | prerelease | from-git]
 // It now returns metadata about the operation.
 // Run bumps the version, updates go.mod for v2+ modules, rewrites self-imports, and commits the changes.
-func Run(versionFilePath, versionArg string, extraFiles []string) (VersionMeta, error) {
+func Run(versionFilePath, versionArg string, extraFiles []string, bumpFiles []string, postBumpScript string) (VersionMeta, error) {
 	var meta VersionMeta
 
 	// 1. Ensure git is available
@@ -451,6 +452,24 @@ func Run(versionFilePath, versionArg string, extraFiles []string) (VersionMeta, 
 		}
 	}
 
+	// 6.7. Process bump files
+	var bumpedFiles []string
+	for _, bf := range bumpFiles {
+		if err := findAndReplaceSemver(bf, meta.NewVersion); err != nil {
+			// Log warning but don't fail
+			fmt.Fprintf(os.Stderr, "Warning: failed to bump version in %s: %v\n", bf, err)
+		} else {
+			bumpedFiles = append(bumpedFiles, bf)
+		}
+	}
+
+	// 6.8. Run post-bump script if provided
+	if postBumpScript != "" {
+		if err := runPostBumpScript(postBumpScript, meta.OldVersion, meta.NewVersion); err != nil {
+			return meta, fmt.Errorf("post-bump script failed: %w", err)
+		}
+	}
+
 	// 7. Stage, commit, and tag
 	filesToCommit := make([]string, len(extraFiles))
 	copy(filesToCommit, extraFiles)
@@ -459,11 +478,13 @@ func Run(versionFilePath, versionArg string, extraFiles []string) (VersionMeta, 
 		filesToCommit = append(filesToCommit, filepath.Join(modDir, "go.mod"))
 	}
 	filesToCommit = append(filesToCommit, rewritten...)
+	filesToCommit = append(filesToCommit, bumpedFiles...)
 	if err := gitCommit(meta.NewVersion, filesToCommit); err != nil {
 		return meta, err
 	}
 
 	meta.UpdatedFiles = append([]string{versionFilePath}, rewritten...)
+	meta.UpdatedFiles = append(meta.UpdatedFiles, bumpedFiles...)
 	if modDir != "" {
 	  meta.UpdatedFiles = append([]string{filepath.Join(modDir, "go.mod")}, meta.UpdatedFiles...)
 	}
@@ -478,7 +499,8 @@ func Run(versionFilePath, versionArg string, extraFiles []string) (VersionMeta, 
 // - the versionFilePath itself
 // - go.mod (for v2+ bumps)
 // - any .go files whose imports need rewriting.
-func DryRun(versionFilePath, versionArg string) (VersionMeta, error) {
+// - any files that would be processed by bump-file flags.
+func DryRun(versionFilePath, versionArg string, bumpFiles []string) (VersionMeta, error) {
     var meta VersionMeta
 
     // 1. Read current version
@@ -553,8 +575,74 @@ func DryRun(versionFilePath, versionArg string) (VersionMeta, error) {
         }
     }
 
+    // 6. Check bump files
+    for _, bf := range bumpFiles {
+        if _, err := os.Stat(bf); err == nil {
+            files = append(files, bf)
+        }
+    }
+
     meta.UpdatedFiles = files
     return meta, nil
+}
+
+// findAndReplaceSemver finds the first semantic version in a file and replaces it with newVersion.
+// It uses the official semver regex and does NOT support 'v' prefixes.
+func findAndReplaceSemver(filepath, newVersion string) error {
+	// Read file
+	content, err := os.ReadFile(filepath)
+	if err != nil {
+		return fmt.Errorf("failed to read file: %w", err)
+	}
+
+	// Official semver regex with named capture groups from semver.org
+	// Removed anchors (^ and $) to find versions anywhere in the file
+	semverPattern := `(?P<major>0|[1-9]\d*)\.(?P<minor>0|[1-9]\d*)\.(?P<patch>0|[1-9]\d*)(?:-(?P<prerelease>(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\.(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\+(?P<buildmetadata>[0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*))?`
+
+	re, err := regexp.Compile(semverPattern)
+	if err != nil {
+		return fmt.Errorf("failed to compile regex: %w", err)
+	}
+
+	// Find all matches with their positions
+	allMatches := re.FindAllIndex(content, -1)
+	if len(allMatches) == 0 {
+		return fmt.Errorf("no semantic version found in file")
+	}
+
+	// Check each match to find the first one not preceded by 'v' or 'V'
+	var validMatch []int
+	for _, match := range allMatches {
+		start := match[0]
+		// Check if there's a character before this match
+		if start > 0 {
+			prevChar := content[start-1]
+			if prevChar == 'v' || prevChar == 'V' {
+				// Skip this match as it's part of a v-prefixed version
+				continue
+			}
+		}
+		// This is a valid match
+		validMatch = match
+		break
+	}
+
+	if validMatch == nil {
+		return fmt.Errorf("no semantic version found in file")
+	}
+
+	// Get the matched version string
+	matchedVersion := content[validMatch[0]:validMatch[1]]
+
+	// Replace only the first valid occurrence
+	newContent := bytes.Replace(content, matchedVersion, []byte(newVersion), 1)
+
+	// Write back
+	if err := os.WriteFile(filepath, newContent, 0644); err != nil {
+		return fmt.Errorf("failed to write file: %w", err)
+	}
+
+	return nil
 }
 
 // locateGoModDir walks up from startDir until it finds go.mod.
@@ -703,4 +791,49 @@ func updateSelfImports(modDir, oldMod, newMod string) ([]string, error) {
 	})
 
 	return modified, err
+}
+
+// runPostBumpScript executes the post-bump script with version information in environment variables.
+func runPostBumpScript(scriptPath, oldVersion, newVersion string) error {
+	// Check if script exists and is executable
+	info, err := os.Stat(scriptPath)
+	if err != nil {
+		return fmt.Errorf("script not found: %w", err)
+	}
+
+	// On Unix systems, check if executable
+	if info.Mode()&0111 == 0 && runtime.GOOS != "windows" {
+		return fmt.Errorf("script is not executable: %s", scriptPath)
+	}
+
+	// Prepare the command
+	cmd := exec.Command(scriptPath)
+
+	// Set environment variables
+	cmd.Env = append(os.Environ(),
+		fmt.Sprintf("GOVERSION_OLD_VERSION=%s", oldVersion),
+		fmt.Sprintf("GOVERSION_NEW_VERSION=%s", newVersion),
+	)
+
+	// Capture output
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	// Run the script
+	err = cmd.Run()
+
+	// Always print output if there is any
+	if stdout.Len() > 0 {
+		fmt.Print(stdout.String())
+	}
+	if stderr.Len() > 0 {
+		fmt.Fprint(os.Stderr, stderr.String())
+	}
+
+	if err != nil {
+		return fmt.Errorf("script execution failed: %w", err)
+	}
+
+	return nil
 }

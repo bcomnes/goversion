@@ -29,4 +29,4 @@ version: ## Run the goversion tool. Usage: make version bump="patch" [files="-fi
 		exit 1; \
 	fi
 	@echo "Running goversion with bump: $(bump)"
-	go run cmd/main.go $(bump)
+	go run main.go $(bump)

@@ -205,7 +205,7 @@ func TestGitIntegration(t *testing.T) {
 
 	// Run the version bump. For example, bump the "patch" version.
 	// Pass the version file path to Run and also include it in the extra files list.
-	if _, err := Run(versionFilePath, "patch", []string{versionFilePath}); err != nil {
+	if _, err := Run(versionFilePath, "patch", []string{versionFilePath}, []string{}, ""); err != nil {
 		t.Fatalf("Run failed: %v", err)
 	}
 
@@ -289,7 +289,7 @@ func TestExplicitVersion(t *testing.T) {
 
 	// Run with an explicit version (e.g., bumping directly to 2.0.0).
 	explicitVersion := "2.0.0"
-	if _, err := Run(versionFilePath, explicitVersion, []string{versionFilePath}); err != nil {
+	if _, err := Run(versionFilePath, explicitVersion, []string{versionFilePath}, []string{}, ""); err != nil {
 		t.Fatalf("Run with explicit version failed: %v", err)
 	}
 
@@ -380,7 +380,7 @@ func TestRejectsDirtyWorkingDir(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err = Run(versionPath, "patch", []string{versionPath})
+	_, err = Run(versionPath, "patch", []string{versionPath}, []string{}, "")
 	if err == nil || !strings.Contains(err.Error(), "working directory is dirty") {
 		t.Errorf("expected error due to dirty working directory, got: %v", err)
 	}
@@ -403,7 +403,7 @@ func TestDryRun(t *testing.T) {
 	}
 
 	// Execute DryRun with a "minor" bump.
-	meta, err := DryRun(versionFilePath, "minor")
+	meta, err := DryRun(versionFilePath, "minor", []string{})
 	if err != nil {
 		t.Fatalf("DryRun failed: %v", err)
 	}
@@ -566,4 +566,657 @@ func B() { a.A() }
     if !strings.Contains(string(out), wantImport) {
         t.Errorf("b.go import not updated, expected %q; got:\n%s", wantImport, string(out))
     }
+}
+
+// TestFindAndReplaceSemver tests the findAndReplaceSemver function with various file formats.
+func TestFindAndReplaceSemver(t *testing.T) {
+	tests := []struct {
+		name        string
+		content     string
+		newVersion  string
+		wantContent string
+		wantErr     bool
+	}{
+		{
+			name: "package.json",
+			content: `{
+  "name": "my-package",
+  "version": "1.2.3",
+  "dependencies": {
+    "express": "4.18.0",
+    "lodash": "4.17.21"
+  }
+}`,
+			newVersion: "2.0.0",
+			wantContent: `{
+  "name": "my-package",
+  "version": "2.0.0",
+  "dependencies": {
+    "express": "4.18.0",
+    "lodash": "4.17.21"
+  }
+}`,
+		},
+		{
+			name: "Cargo.toml",
+			content: `[package]
+name = "my-crate"
+version = "0.1.0"
+
+[dependencies]
+serde = "1.0.130"
+tokio = { version = "1.21.0", features = ["full"] }`,
+			newVersion: "1.0.0",
+			wantContent: `[package]
+name = "my-crate"
+version = "1.0.0"
+
+[dependencies]
+serde = "1.0.130"
+tokio = { version = "1.21.0", features = ["full"] }`,
+		},
+		{
+			name: "extension.toml",
+			content: `id = "zed-theme-tron-legacy"
+name = "Tron Legacy"
+version = "1.0.1"
+schema_version = 1`,
+			newVersion: "1.1.0",
+			wantContent: `id = "zed-theme-tron-legacy"
+name = "Tron Legacy"
+version = "1.1.0"
+schema_version = 1`,
+		},
+		{
+			name: "pyproject.toml",
+			content: `[tool.poetry]
+name = "my-package"
+version = "2.1.0"
+
+[tool.poetry.dependencies]
+python = "3.8"
+requests = "2.28.0"`,
+			newVersion: "3.0.0",
+			wantContent: `[tool.poetry]
+name = "my-package"
+version = "3.0.0"
+
+[tool.poetry.dependencies]
+python = "3.8"
+requests = "2.28.0"`,
+		},
+		{
+			name: "prerelease version",
+			content: `version = "1.0.0-alpha.1"
+other = "1.0.0"`,
+			newVersion: "1.0.0-beta.1",
+			wantContent: `version = "1.0.0-beta.1"
+other = "1.0.0"`,
+		},
+		{
+			name: "version with build metadata",
+			content: `version: 1.2.3+build.123
+next: 2.0.0`,
+			newVersion: "1.2.4",
+			wantContent: `version: 1.2.4
+next: 2.0.0`,
+		},
+		{
+			name: "complex prerelease and build metadata 1",
+			content: `version = "1.0.0-alpha+001"
+description = "Alpha release with build number"`,
+			newVersion: "1.0.0-beta.1",
+			wantContent: `version = "1.0.0-beta.1"
+description = "Alpha release with build number"`,
+		},
+		{
+			name: "complex build metadata with timestamp",
+			content: `{
+  "version": "1.0.0+20130313144700",
+  "build": "automated"
+}`,
+			newVersion: "1.0.1",
+			wantContent: `{
+  "version": "1.0.1",
+  "build": "automated"
+}`,
+		},
+		{
+			name: "prerelease with complex build metadata",
+			content: `[package]
+version = "1.0.0-beta+exp.sha.5114f85"
+name = "experimental"`,
+			newVersion: "1.0.0",
+			wantContent: `[package]
+version = "1.0.0"
+name = "experimental"`,
+		},
+		{
+			name: "build metadata with special characters",
+			content: `app_version: 1.0.0+21AF26D3----117B344092BD
+status: deployed`,
+			newVersion: "1.1.0",
+			wantContent: `app_version: 1.1.0
+status: deployed`,
+		},
+		{
+			name: "multiple complex versions only first replaced",
+			content: `versions:
+  current: 2.1.0-rc.1+build.123
+  previous: 2.0.0+20130313144700
+  legacy: 1.9.9-beta+exp.sha.5114f85`,
+			newVersion: "2.1.0",
+			wantContent: `versions:
+  current: 2.1.0
+  previous: 2.0.0+20130313144700
+  legacy: 1.9.9-beta+exp.sha.5114f85`,
+		},
+		{
+			name: "zero-padded numeric prerelease",
+			content: `release = "1.0.0-0.3.7"`,
+			newVersion: "1.0.0-0.3.8",
+			wantContent: `release = "1.0.0-0.3.8"`,
+		},
+		{
+			name: "complex prerelease identifiers",
+			content: `version: "1.0.0-x.7.z.92"`,
+			newVersion: "1.0.0-x.7.z.93",
+			wantContent: `version: "1.0.0-x.7.z.93"`,
+		},
+		{
+			name: "prerelease with hyphens",
+			content: `{"version": "1.0.0-x-y-z.--"}`,
+			newVersion: "1.0.0",
+			wantContent: `{"version": "1.0.0"}`,
+		},
+		{
+			name: "semver.org example 1",
+			content: `version = "1.0.0-alpha"`,
+			newVersion: "1.0.0-alpha.1",
+			wantContent: `version = "1.0.0-alpha.1"`,
+		},
+		{
+			name: "semver.org example 2",
+			content: `version = "1.0.0-alpha.1"`,
+			newVersion: "1.0.0-alpha.beta",
+			wantContent: `version = "1.0.0-alpha.beta"`,
+		},
+		{
+			name: "semver.org example 3",
+			content: `version = "1.0.0-0.3.7"`,
+			newVersion: "1.0.0-rc.1",
+			wantContent: `version = "1.0.0-rc.1"`,
+		},
+		{
+			name: "semver.org example 4",
+			content: `version = "1.0.0-x.7.z.92"`,
+			newVersion: "1.0.0",
+			wantContent: `version = "1.0.0"`,
+		},
+		{
+			name: "semver.org example 5",
+			content: `version = "1.0.0-alpha+001"`,
+			newVersion: "1.0.0",
+			wantContent: `version = "1.0.0"`,
+		},
+		{
+			name: "semver.org example 6",
+			content: `version = "1.0.0+20130313144700"`,
+			newVersion: "1.0.1",
+			wantContent: `version = "1.0.1"`,
+		},
+		{
+			name: "semver.org example 7",
+			content: `version = "1.0.0-beta+exp.sha.5114f85"`,
+			newVersion: "1.0.0-beta.2",
+			wantContent: `version = "1.0.0-beta.2"`,
+		},
+		{
+			name:        "no semver found",
+			content:     `name = "test"\ndescription = "no version here"`,
+			newVersion:  "1.0.0",
+			wantContent: `name = "test"\ndescription = "no version here"`,
+			wantErr:     true,
+		},
+		{
+			name:        "v-prefixed version ignored",
+			content:     `version = "v1.2.3"`,
+			newVersion:  "2.0.0",
+			wantContent: `version = "v1.2.3"`,
+			wantErr:     true,
+		},
+		{
+			name: "multiple versions only first replaced",
+			content: `main_version = "1.0.0"
+api_version = "2.0.0"
+cli_version = "3.0.0"`,
+			newVersion: "4.0.0",
+			wantContent: `main_version = "4.0.0"
+api_version = "2.0.0"
+cli_version = "3.0.0"`,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			// Create temp file
+			tmpFile, err := os.CreateTemp("", "test_*.toml")
+			if err != nil {
+				t.Fatalf("failed to create temp file: %v", err)
+			}
+			defer os.Remove(tmpFile.Name())
+
+			// Write initial content
+			if err := os.WriteFile(tmpFile.Name(), []byte(tc.content), 0644); err != nil {
+				t.Fatalf("failed to write initial content: %v", err)
+			}
+
+			// Run findAndReplaceSemver
+			err = findAndReplaceSemver(tmpFile.Name(), tc.newVersion)
+
+			// Check error
+			if tc.wantErr {
+				if err == nil {
+					t.Errorf("expected error but got none")
+				}
+			} else {
+				if err != nil {
+					t.Errorf("unexpected error: %v", err)
+				}
+			}
+
+			// Check content
+			gotContent, err := os.ReadFile(tmpFile.Name())
+			if err != nil {
+				t.Fatalf("failed to read result: %v", err)
+			}
+
+			if string(gotContent) != tc.wantContent {
+				t.Errorf("content mismatch\ngot:\n%s\nwant:\n%s", gotContent, tc.wantContent)
+			}
+		})
+	}
+}
+
+// TestBumpFilesIntegration tests the full integration of bump files with git.
+func TestBumpFilesIntegration(t *testing.T) {
+	if err := checkGit(); err != nil {
+		t.Skip("git is not available on system")
+	}
+
+	// Create temp directory
+	tmpDir, err := os.MkdirTemp("", "goversion_bump_files_test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// Initialize git repo
+	cmd := exec.Command("git", "init")
+	cmd.Dir = tmpDir
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git init failed: %v, output: %s", err, string(output))
+	}
+
+	// Configure git
+	configCmds := [][]string{
+		{"git", "config", "user.email", "test@example.com"},
+		{"git", "config", "user.name", "Test User"},
+	}
+	for _, args := range configCmds {
+		cmd := exec.Command(args[0], args[1:]...)
+		cmd.Dir = tmpDir
+		if output, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git config failed: %v, output: %s", err, string(output))
+		}
+	}
+
+	// Create version.go
+	versionFile := filepath.Join(tmpDir, "version.go")
+	if err := writeVersionFile(versionFile, "1.2.3"); err != nil {
+		t.Fatalf("writeVersionFile failed: %v", err)
+	}
+
+	// Create package.json
+	packageFile := filepath.Join(tmpDir, "package.json")
+	packageContent := `{
+  "name": "test-package",
+  "version": "1.2.3",
+  "dependencies": {
+    "express": "4.18.0"
+  }
+}`
+	if err := os.WriteFile(packageFile, []byte(packageContent), 0644); err != nil {
+		t.Fatalf("failed to write package.json: %v", err)
+	}
+
+	// Create Cargo.toml
+	cargoFile := filepath.Join(tmpDir, "Cargo.toml")
+	cargoContent := `[package]
+name = "test-crate"
+version = "1.2.3"
+
+[dependencies]
+serde = "1.0.130"`
+	if err := os.WriteFile(cargoFile, []byte(cargoContent), 0644); err != nil {
+		t.Fatalf("failed to write Cargo.toml: %v", err)
+	}
+
+	// Stage and commit initial files
+	cmd = exec.Command("git", "add", ".")
+	cmd.Dir = tmpDir
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git add failed: %v, output: %s", err, string(output))
+	}
+	cmd = exec.Command("git", "commit", "-m", "initial commit")
+	cmd.Dir = tmpDir
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git commit failed: %v, output: %s", err, string(output))
+	}
+
+	// Change working directory
+	origDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(origDir)
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatal(err)
+	}
+
+	// Run with bump files
+	meta, err := Run(versionFile, "minor", []string{versionFile}, []string{packageFile, cargoFile}, "")
+	if err != nil {
+		t.Fatalf("Run failed: %v", err)
+	}
+
+	// Verify metadata
+	if meta.OldVersion != "1.2.3" {
+		t.Errorf("expected OldVersion 1.2.3, got %s", meta.OldVersion)
+	}
+	if meta.NewVersion != "1.3.0" {
+		t.Errorf("expected NewVersion 1.3.0, got %s", meta.NewVersion)
+	}
+
+	// Verify all files were updated
+	versionContent, _ := readCurrentVersion(versionFile)
+	if versionContent != "1.3.0" {
+		t.Errorf("version.go not updated correctly: %s", versionContent)
+	}
+
+	packageResult, _ := os.ReadFile(packageFile)
+	if !strings.Contains(string(packageResult), `"version": "1.3.0"`) {
+		t.Errorf("package.json not updated correctly: %s", packageResult)
+	}
+
+	cargoResult, _ := os.ReadFile(cargoFile)
+	if !strings.Contains(string(cargoResult), `version = "1.3.0"`) {
+		t.Errorf("Cargo.toml not updated correctly: %s", cargoResult)
+	}
+
+	// Verify git tag
+	cmd = exec.Command("git", "tag")
+	cmd.Dir = tmpDir
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git tag failed: %v, output: %s", err, string(output))
+	}
+	if !strings.Contains(string(output), "v1.3.0") {
+		t.Errorf("expected git tag v1.3.0 not found; got tags: %v", string(output))
+	}
+
+	// Verify UpdatedFiles includes all bump files
+	if !slices.Contains(meta.UpdatedFiles, versionFile) {
+		t.Errorf("version.go not in UpdatedFiles")
+	}
+	if !slices.Contains(meta.UpdatedFiles, packageFile) {
+		t.Errorf("package.json not in UpdatedFiles")
+	}
+	if !slices.Contains(meta.UpdatedFiles, cargoFile) {
+		t.Errorf("Cargo.toml not in UpdatedFiles")
+	}
+}
+
+// TestDryRunWithBumpFiles tests that DryRun correctly identifies bump files.
+func TestDryRunWithBumpFiles(t *testing.T) {
+	// Create temp directory
+	tmpDir, err := os.MkdirTemp("", "goversion_dryrun_bump_test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// Create version.go
+	versionFile := filepath.Join(tmpDir, "version.go")
+	if err := writeVersionFile(versionFile, "1.0.0"); err != nil {
+		t.Fatalf("writeVersionFile failed: %v", err)
+	}
+
+	// Create a bump file
+	bumpFile := filepath.Join(tmpDir, "config.toml")
+	bumpContent := `version = "1.0.0"`
+	if err := os.WriteFile(bumpFile, []byte(bumpContent), 0644); err != nil {
+		t.Fatalf("failed to write bump file: %v", err)
+	}
+
+	// Run DryRun
+	meta, err := DryRun(versionFile, "major", []string{bumpFile})
+	if err != nil {
+		t.Fatalf("DryRun failed: %v", err)
+	}
+
+	// Verify metadata
+	if meta.NewVersion != "2.0.0" {
+		t.Errorf("expected NewVersion 2.0.0, got %s", meta.NewVersion)
+	}
+
+	// Verify UpdatedFiles includes bump file
+	if !slices.Contains(meta.UpdatedFiles, bumpFile) {
+		t.Errorf("bump file not in UpdatedFiles: %v", meta.UpdatedFiles)
+	}
+
+	// Verify files were NOT actually modified
+	content, _ := os.ReadFile(bumpFile)
+	if !strings.Contains(string(content), `version = "1.0.0"`) {
+		t.Errorf("bump file was modified during dry run")
+	}
+}
+
+// TestPostBumpScript tests the post-bump script functionality.
+func TestPostBumpScript(t *testing.T) {
+	if err := checkGit(); err != nil {
+		t.Skip("git is not available on system")
+	}
+
+	// Create temp directory
+	tmpDir, err := os.MkdirTemp("", "goversion_postbump_test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// Initialize git repo
+	cmd := exec.Command("git", "init")
+	cmd.Dir = tmpDir
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git init failed: %v, output: %s", err, string(output))
+	}
+
+	// Configure git
+	configCmds := [][]string{
+		{"git", "config", "user.email", "test@example.com"},
+		{"git", "config", "user.name", "Test User"},
+	}
+	for _, args := range configCmds {
+		cmd := exec.Command(args[0], args[1:]...)
+		cmd.Dir = tmpDir
+		if output, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git config failed: %v, output: %s", err, string(output))
+		}
+	}
+
+	// Create version.go
+	versionFile := filepath.Join(tmpDir, "version.go")
+	if err := writeVersionFile(versionFile, "1.0.0"); err != nil {
+		t.Fatalf("writeVersionFile failed: %v", err)
+	}
+
+	// Create a simple post-bump script that creates a file with version info
+	scriptPath := filepath.Join(tmpDir, "post-bump.sh")
+	scriptContent := `#!/bin/sh
+echo "Old: $GOVERSION_OLD_VERSION" > version-info.txt
+echo "New: $GOVERSION_NEW_VERSION" >> version-info.txt
+echo "Post-bump script executed"
+`
+	if err := os.WriteFile(scriptPath, []byte(scriptContent), 0755); err != nil {
+		t.Fatalf("failed to write post-bump script: %v", err)
+	}
+
+	// Stage and commit initial files
+	cmd = exec.Command("git", "add", ".")
+	cmd.Dir = tmpDir
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git add failed: %v, output: %s", err, string(output))
+	}
+	cmd = exec.Command("git", "commit", "-m", "initial commit")
+	cmd.Dir = tmpDir
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git commit failed: %v, output: %s", err, string(output))
+	}
+
+	// Change working directory
+	origDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(origDir)
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatal(err)
+	}
+
+	// Run with post-bump script
+	versionInfoPath := filepath.Join(tmpDir, "version-info.txt")
+	meta, err := Run(versionFile, "minor", []string{versionFile, versionInfoPath}, []string{}, scriptPath)
+	if err != nil {
+		t.Fatalf("Run failed: %v", err)
+	}
+
+	// Verify version was bumped
+	if meta.NewVersion != "1.1.0" {
+		t.Errorf("expected NewVersion 1.1.0, got %s", meta.NewVersion)
+	}
+
+	// Verify post-bump script created the file
+	content, err := os.ReadFile(versionInfoPath)
+	if err != nil {
+		t.Fatalf("post-bump script did not create expected file: %v", err)
+	}
+
+	expectedContent := "Old: 1.0.0\nNew: 1.1.0\n"
+	if string(content) != expectedContent {
+		t.Errorf("version-info.txt content mismatch\ngot:\n%s\nwant:\n%s", content, expectedContent)
+	}
+
+	// Verify git tag was created
+	cmd = exec.Command("git", "tag")
+	cmd.Dir = tmpDir
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git tag failed: %v, output: %s", err, string(output))
+	}
+	if !strings.Contains(string(output), "v1.1.0") {
+		t.Errorf("expected git tag v1.1.0 not found; got tags: %v", string(output))
+	}
+}
+
+// TestPostBumpScriptFailure tests that a failing post-bump script aborts the operation.
+func TestPostBumpScriptFailure(t *testing.T) {
+	if err := checkGit(); err != nil {
+		t.Skip("git is not available on system")
+	}
+
+	// Create temp directory
+	tmpDir, err := os.MkdirTemp("", "goversion_postbump_fail_test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// Initialize git repo
+	cmd := exec.Command("git", "init")
+	cmd.Dir = tmpDir
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git init failed: %v, output: %s", err, string(output))
+	}
+
+	// Configure git
+	configCmds := [][]string{
+		{"git", "config", "user.email", "test@example.com"},
+		{"git", "config", "user.name", "Test User"},
+	}
+	for _, args := range configCmds {
+		cmd := exec.Command(args[0], args[1:]...)
+		cmd.Dir = tmpDir
+		if output, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git config failed: %v, output: %s", err, string(output))
+		}
+	}
+
+	// Create version.go
+	versionFile := filepath.Join(tmpDir, "version.go")
+	if err := writeVersionFile(versionFile, "1.0.0"); err != nil {
+		t.Fatalf("writeVersionFile failed: %v", err)
+	}
+
+	// Create a post-bump script that fails
+	scriptPath := filepath.Join(tmpDir, "failing-script.sh")
+	scriptContent := `#!/bin/sh
+echo "This script will fail" >&2
+exit 1
+`
+	if err := os.WriteFile(scriptPath, []byte(scriptContent), 0755); err != nil {
+		t.Fatalf("failed to write failing script: %v", err)
+	}
+
+	// Stage and commit initial files
+	cmd = exec.Command("git", "add", ".")
+	cmd.Dir = tmpDir
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git add failed: %v, output: %s", err, string(output))
+	}
+	cmd = exec.Command("git", "commit", "-m", "initial commit")
+	cmd.Dir = tmpDir
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git commit failed: %v, output: %s", err, string(output))
+	}
+
+	// Change working directory
+	origDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(origDir)
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatal(err)
+	}
+
+	// Run with failing post-bump script
+	_, err = Run(versionFile, "patch", []string{versionFile}, []string{}, scriptPath)
+	if err == nil {
+		t.Errorf("expected error from failing post-bump script, got none")
+	}
+	if !strings.Contains(err.Error(), "post-bump script failed") {
+		t.Errorf("expected 'post-bump script failed' error, got: %v", err)
+	}
+
+	// Verify no git tag was created
+	cmd = exec.Command("git", "tag")
+	cmd.Dir = tmpDir
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git tag failed: %v, output: %s", err, string(output))
+	}
+	if strings.Contains(string(output), "v1.0.1") {
+		t.Errorf("git tag should not have been created after script failure")
+	}
 }

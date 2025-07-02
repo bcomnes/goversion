@@ -16,6 +16,12 @@
 //	               (Defaults to "./version.go")
 //	-file:         Specifies additional file(s) to be staged together with the version file.
 //	               This flag may be used multiple times.
+//	-bump-file:    Specifies additional file(s) to scan for the first semantic version and bump it.
+//	               This flag may be used multiple times. The found version is replaced with the same
+//	               version as the main version file. Only valid semver strings are matched (no "v" prefix).
+//	-post-bump:    Specifies a script to execute after version bump but before git commit.
+//	               The script receives GOVERSION_OLD_VERSION and GOVERSION_NEW_VERSION environment variables.
+//	               Files created or modified by the script must be specified with -file to be included in the commit.
 //	-version:      Displays the version of the goversion CLI tool and exits.
 //
 // Examples:
@@ -46,6 +52,16 @@
 //
 //	# Bump patch version and include README.md in the commit
 //	goversion -version-file=./version.go -file=README.md patch
+//
+//	# Bump version in multiple files (package.json, Cargo.toml, etc.)
+//	goversion -bump-file=package.json -bump-file=Cargo.toml patch
+//
+//	# Run a script after bumping but before committing
+//	# Files created by the script must be explicitly included with -file
+//	goversion -post-bump=./scripts/update-docs.sh -file=docs/version.md minor
+//
+//	# Combine version file, bump files, and extra files
+//	goversion -version-file=./version.go -bump-file=package.json -file=README.md minor
 //
 // This command bumps the patch version, updates the version file, stages the changes
 // (including README.md), commits using the new version as the commit message, and tags
