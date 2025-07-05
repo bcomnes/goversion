@@ -43,7 +43,7 @@ go get -tool github.com/bcomnes/goversion/v2
 The `goversion` CLI defaults to using `./version.go` as the version file, but you can override this with the `-version-file` flag. Use the `-file` flag to specify additional files to be staged.
 
 ```
-go tool github.com/bcomnes/goversion [flags] <version-bump>
+go tool github.com/bcomnes/goversion/v2 [flags] <version-bump>
 ```
 
 #### Flags
