@@ -29,10 +29,18 @@ It is intended for use with `go tool`s that are consumed from source.
 
 ## Install
 
-Install via Go modules:
+Install the standalone command with [Homebrew](https://brew.sh):
 
 ```console
-# Install go version as a tool
+brew install bcomnes/tap/goversion
+```
+
+This adds the `bcomnes/tap` tap automatically.
+Run `goversion -help` for usage and update it later with `brew upgrade goversion`.
+
+For a project-pinned Go tool instead:
+
+```console
 go get -tool github.com/bcomnes/goversion/v2
 ```
 

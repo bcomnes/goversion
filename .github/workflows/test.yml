@@ -1,10 +1,14 @@
 name: tests
 
-on: [push]
+on: [pull_request, push]
+
+permissions: {}
 
 jobs:
   test:
     runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
 
     strategy:
       matrix:
@@ -13,8 +17,24 @@ jobs:
 
     steps:
     - uses: actions/checkout@v7
+      with:
+        persist-credentials: false
     - uses: actions/setup-go@v7
       with:
         go-version: ${{ matrix.go }}
         check-latest: true
     - run: make all
+
+  automerge:
+    needs: test
+    if: ${{ github.event_name == 'pull_request' && github.event.pull_request.user.login == 'dependabot[bot]' && startsWith(github.head_ref, 'dependabot/github_actions/actions/') }}
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+      contents: write
+    steps:
+      - name: Merge first-party GitHub Actions Dependabot PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+        run: gh pr merge "$PR_URL" --squash --delete-branch
