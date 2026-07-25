@@ -21,12 +21,16 @@ import (
 	"golang.org/x/mod/semver"
 )
 
-// VersionMeta holds metadata about the version bump operation.
+// VersionMeta describes a completed or simulated version bump.
 type VersionMeta struct {
-	OldVersion string // The version before bumping.
-	NewVersion string // The new version after bumping.
-	BumpType   string // How the version was bumped (e.g. "major", "explicit", "from-git", etc.).
-	UpdatedFiles []string  // Paths of all files written (version.go, go.mod, self-imports)
+	// OldVersion is the version read before applying the bump.
+	OldVersion string
+	// NewVersion is the resulting version without a leading v prefix.
+	NewVersion string
+	// BumpType identifies the directive used to select NewVersion, such as patch, explicit, or from-git.
+	BumpType string
+	// UpdatedFiles lists files written by Run or files that DryRun predicts would change.
+	UpdatedFiles []string
 }
 
 // normalizeVersion ensures the version string starts with a "v" if it's not "dev".
@@ -159,7 +163,7 @@ func determinePackageName(path string) (string, error) {
 			return "", fmt.Errorf("failed to read file %q: %v", path, err)
 		}
 		re := regexp.MustCompile(`(?m)^package\s+(\w+)`)
-		if matches := re.FindSubmatch(data); matches != nil && len(matches) >= 2 {
+		if matches := re.FindSubmatch(data); len(matches) >= 2 {
 			return string(matches[1]), nil
 		}
 		// Fall through if we can't parse the package name.
@@ -207,46 +211,45 @@ var (
 }
 
 func updateGoMod(modDir, newVersion string) error {
-    modPath := filepath.Join(modDir, "go.mod")
-    data, err := os.ReadFile(modPath)
-    if err != nil {
-        return fmt.Errorf("reading go.mod: %w", err)
-    }
+	modPath := filepath.Join(modDir, "go.mod")
+	data, err := os.ReadFile(modPath)
+	if err != nil {
+		return fmt.Errorf("reading go.mod: %w", err)
+	}
 
-    f, err := modfile.Parse(modPath, data, nil)
-    if err != nil {
-        return fmt.Errorf("parsing go.mod: %w", err)
-    }
-    if f.Module == nil {
-        return fmt.Errorf("module directive not found")
-    }
+	f, err := modfile.Parse(modPath, data, nil)
+	if err != nil {
+		return fmt.Errorf("parsing go.mod: %w", err)
+	}
+	if f.Module == nil {
+		return fmt.Errorf("module directive not found")
+	}
 
-    basePath, _, _ := module.SplitPathVersion(f.Module.Mod.Path)
-    maj := semver.Major("v" + newVersion)
+	basePath, _, _ := module.SplitPathVersion(f.Module.Mod.Path)
+	maj := semver.Major("v" + newVersion)
 
-    var newPath string
-    if maj == "v0" || maj == "v1" {
-        newPath = basePath
-    } else {
-        newPath = basePath + "/" + maj
-    }
+	var newPath string
+	if maj == "v0" || maj == "v1" {
+		newPath = basePath
+	} else {
+		newPath = basePath + "/" + maj
+	}
 
-    // update both AST and logical path
-    f.Module.Mod.Path = newPath
-    if f.Module.Syntax != nil && len(f.Module.Syntax.Token) >= 2 {
-        f.Module.Syntax.Token[1] = newPath
-    }
+	// update both AST and logical path
+	f.Module.Mod.Path = newPath
+	if f.Module.Syntax != nil && len(f.Module.Syntax.Token) >= 2 {
+		f.Module.Syntax.Token[1] = newPath
+	}
 
-    out, err := f.Format()
-    if err != nil {
-        return fmt.Errorf("formatting go.mod: %w", err)
-    }
-    if err := os.WriteFile(modPath, out, 0644); err != nil {
-        return fmt.Errorf("writing go.mod: %w", err)
-    }
-    return nil
+	out, err := f.Format()
+	if err != nil {
+		return fmt.Errorf("formatting go.mod: %w", err)
+	}
+	if err := os.WriteFile(modPath, out, 0644); err != nil {
+		return fmt.Errorf("writing go.mod: %w", err)
+	}
+	return nil
 }
-
 
 // readCurrentVersion reads the version file at the given path
 // and extracts the version string. If the file does not exist,
@@ -276,7 +279,7 @@ func readCurrentVersion(path string) (string, error) {
 
 	// File exists: parse out the version string
 	re := regexp.MustCompile(`Version\s*=\s*"([^"]+)"`)
-	if matches := re.FindSubmatch(data); matches != nil && len(matches) >= 2 {
+	if matches := re.FindSubmatch(data); len(matches) >= 2 {
 		return string(matches[1]), nil
 	}
 	return "", errors.New("failed to find version string in file")
@@ -332,14 +335,16 @@ func getVersionFromGitDir(dir string) (string, error) {
 	return strings.TrimPrefix(tag, "v"), nil
 }
 
-// Run is the main function for the goversion library.
-// It accepts a path to the Go file containing a version declaration,
-// a version argument (which can be one of the bump keywords or an explicit version),
-// and a slice of extra files to include in the commit.
-// Supported versionArg values are:
-//   [<newversion> | major | minor | patch | premajor | preminor | prepatch | prerelease | from-git]
-// It now returns metadata about the operation.
-// Run bumps the version, updates go.mod for v2+ modules, rewrites self-imports, and commits the changes.
+// Run applies a semantic version bump and creates its local Git commit and tag.
+//
+// versionFilePath identifies the Go source file containing Version.
+// versionArg accepts major, minor, patch, premajor, preminor, prepatch, prerelease, from-git, dev, or an explicit semantic version.
+// extraFiles are staged with the generated version changes.
+// bumpFiles have their first semantic version replaced with the new version.
+// postBumpScript runs after file updates and before the commit with GOVERSION_OLD_VERSION and GOVERSION_NEW_VERSION in its environment.
+//
+// For a major bump to v2 or newer, Run updates the module path in go.mod and rewrites self-imports.
+// Run requires unrelated worktree changes to be absent and returns metadata for the files it updates.
 func Run(versionFilePath, versionArg string, extraFiles []string, bumpFiles []string, postBumpScript string) (VersionMeta, error) {
 	var meta VersionMeta
 
@@ -486,104 +491,99 @@ func Run(versionFilePath, versionArg string, extraFiles []string, bumpFiles []st
 	meta.UpdatedFiles = append([]string{versionFilePath}, rewritten...)
 	meta.UpdatedFiles = append(meta.UpdatedFiles, bumpedFiles...)
 	if modDir != "" {
-	  meta.UpdatedFiles = append([]string{filepath.Join(modDir, "go.mod")}, meta.UpdatedFiles...)
+		meta.UpdatedFiles = append([]string{filepath.Join(modDir, "go.mod")}, meta.UpdatedFiles...)
 	}
 
 	return meta, nil
 }
 
-// DryRun is a new function that simulates the version bump operation without
-// writing any changes to disk or modifying the git repository. It returns the
-// VersionMeta data that would be generated by a real bump.
-// DryRun simulates a version bump and reports every file that would change:
-// - the versionFilePath itself
-// - go.mod (for v2+ bumps)
-// - any .go files whose imports need rewriting.
-// - any files that would be processed by bump-file flags.
+// DryRun calculates a version bump without changing files or Git state.
+//
+// It reports the resulting version and every file that Run would update, including versionFilePath, major-version module changes, rewritten self-imports, and bumpFiles.
 func DryRun(versionFilePath, versionArg string, bumpFiles []string) (VersionMeta, error) {
-    var meta VersionMeta
+	var meta VersionMeta
 
-    // 1. Read current version
-    cur, err := readCurrentVersion(versionFilePath)
-    if err != nil {
-        return meta, err
-    }
-    meta.OldVersion = cur
+	// 1. Read current version
+	cur, err := readCurrentVersion(versionFilePath)
+	if err != nil {
+		return meta, err
+	}
+	meta.OldVersion = cur
 
-    // 2. Compute NewVersion and BumpType (same logic as Run)
-    normalized := normalizeVersion(cur)
-    switch versionArg {
-    case "major", "minor", "patch", "premajor", "preminor", "prepatch", "prerelease":
-        bumped, err := bumpVersion(normalized, versionArg)
-        if err != nil {
-            return meta, err
-        }
-        meta.NewVersion = strings.TrimPrefix(bumped, "v")
-        meta.BumpType = versionArg
-    case "from-git":
-        fromGit, err := getVersionFromGitDir(filepath.Dir(versionFilePath))
-        if err != nil {
-            return meta, err
-        }
-        meta.NewVersion = fromGit
-        meta.BumpType = "from-git"
-    default:
-        expl := versionArg
-        if expl != "dev" && !strings.HasPrefix(expl, "v") {
-            expl = "v" + expl
-        }
-        if expl != "dev" && !semver.IsValid(expl) {
-            return meta, fmt.Errorf("explicit version %q is not valid semver", expl)
-        }
-        meta.NewVersion = strings.TrimPrefix(expl, "v")
-        meta.BumpType = "explicit"
-    }
+	// 2. Compute NewVersion and BumpType (same logic as Run)
+	normalized := normalizeVersion(cur)
+	switch versionArg {
+	case "major", "minor", "patch", "premajor", "preminor", "prepatch", "prerelease":
+		bumped, err := bumpVersion(normalized, versionArg)
+		if err != nil {
+			return meta, err
+		}
+		meta.NewVersion = strings.TrimPrefix(bumped, "v")
+		meta.BumpType = versionArg
+	case "from-git":
+		fromGit, err := getVersionFromGitDir(filepath.Dir(versionFilePath))
+		if err != nil {
+			return meta, err
+		}
+		meta.NewVersion = fromGit
+		meta.BumpType = "from-git"
+	default:
+		expl := versionArg
+		if expl != "dev" && !strings.HasPrefix(expl, "v") {
+			expl = "v" + expl
+		}
+		if expl != "dev" && !semver.IsValid(expl) {
+			return meta, fmt.Errorf("explicit version %q is not valid semver", expl)
+		}
+		meta.NewVersion = strings.TrimPrefix(expl, "v")
+		meta.BumpType = "explicit"
+	}
 
-    // 3. Prevent no-op
-    if meta.NewVersion == meta.OldVersion {
-        return meta, fmt.Errorf("new version (%s) is the same as the current version", meta.NewVersion)
-    }
+	// 3. Prevent no-op
+	if meta.NewVersion == meta.OldVersion {
+		return meta, fmt.Errorf("new version (%s) is the same as the current version", meta.NewVersion)
+	}
 
-    // 4. Always include version.go
-    files := []string{versionFilePath}
+	// 4. Always include version.go
+	files := []string{versionFilePath}
 
-    // 5. For major bumps, also include go.mod and scan imports
-    if meta.BumpType == "major" {
-        if modDir, err := locateGoModDir(filepath.Dir(versionFilePath)); err == nil {
-            gomodPath := filepath.Join(modDir, "go.mod")
-            files = append(files, gomodPath)
+	// 5. For major bumps, also include go.mod and scan imports
+	if meta.BumpType == "major" {
+		if modDir, err := locateGoModDir(filepath.Dir(versionFilePath)); err == nil {
+			gomodPath := filepath.Join(modDir, "go.mod")
+			files = append(files, gomodPath)
 
-            // Parse old module path
-            data, _ := os.ReadFile(gomodPath)
-            f, _ := modfile.Parse("go.mod", data, nil)
-            oldMod := f.Module.Mod.Path
+			// Parse old module path
+			data, _ := os.ReadFile(gomodPath)
+			f, _ := modfile.Parse("go.mod", data, nil)
+			oldMod := f.Module.Mod.Path
 
-            // Compute new module path
-            base, _, _ := module.SplitPathVersion(oldMod)
-            maj := semver.Major("v" + meta.NewVersion)
-            var newMod string
-            if maj == "v0" || maj == "v1" {
-                newMod = base
-            } else {
-                newMod = base + "/" + maj
-            }
+			// Compute new module path
+			base, _, _ := module.SplitPathVersion(oldMod)
+			maj := semver.Major("v" + meta.NewVersion)
+			var newMod string
+			if maj == "v0" || maj == "v1" {
+				newMod = base
+			} else {
+				newMod = base + "/" + maj
+			}
 
-            // Scan for all .go files needing import updates
-            if more, err := scanSelfImports(modDir, oldMod, newMod); err == nil {
-                files = append(files, more...)
-            }
-        }
-    }
+			// Scan for all .go files needing import updates
+			if more, err := scanSelfImports(modDir, oldMod, newMod); err == nil {
+				files = append(files, more...)
+			}
+		}
+	}
 
-    // 6. Check bump files
-    for _, bf := range bumpFiles {
-        if _, err := os.Stat(bf); err == nil {
-            files = append(files, bf)
-        }
-    }
+	// 6. Check bump files
+	for _, bf := range bumpFiles {
+		if _, err := os.Stat(bf); err == nil {
+			files = append(files, bf)
+		}
+	}
 
-    meta.UpdatedFiles = files
-    return meta, nil
+	meta.UpdatedFiles = files
+	return meta, nil
 }
 
 // findAndReplaceSemver finds the first semantic version in a file and replaces it with newVersion.
@@ -648,19 +648,19 @@ func findAndReplaceSemver(filepath, newVersion string) error {
 // locateGoModDir walks up from startDir until it finds go.mod.
 // Returns the directory containing go.mod, or ErrNotExist if none found.
 func locateGoModDir(startDir string) (string, error) {
-    d := startDir
-    for {
-        candidate := filepath.Join(d, "go.mod")
-        if _, err := os.Stat(candidate); err == nil {
-            return d, nil
-        }
-        parent := filepath.Dir(d)
-        if parent == d {
-            break
-        }
-        d = parent
-    }
-    return "", os.ErrNotExist
+	d := startDir
+	for {
+		candidate := filepath.Join(d, "go.mod")
+		if _, err := os.Stat(candidate); err == nil {
+			return d, nil
+		}
+		parent := filepath.Dir(d)
+		if parent == d {
+			break
+		}
+		d = parent
+	}
+	return "", os.ErrNotExist
 }
 
 // checkUncommittedFiles ensures only allowed files are modified in the working directory.
@@ -704,34 +704,34 @@ func checkUncommittedFiles(allowed []string) error {
 // scanSelfImports returns the list of .go files under modDir
 // whose imports would be rewritten from oldMod → newMod.
 func scanSelfImports(modDir, oldMod, newMod string) ([]string, error) {
-    var matches []string
-    err := filepath.WalkDir(modDir, func(path string, d fs.DirEntry, err error) error {
-        if err != nil || d.IsDir() {
-            if d != nil && d.IsDir() && d.Name() == "vendor" {
-                return filepath.SkipDir
-            }
-            return nil
-        }
-        if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
-            return nil
-        }
+	var matches []string
+	err := filepath.WalkDir(modDir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			if d != nil && d.IsDir() && d.Name() == "vendor" {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
 
-        fset := token.NewFileSet()
-        f, err := parser.ParseFile(fset, path, nil, parser.ImportsOnly)
-        if err != nil {
-            // skip unparsable files
-            return nil
-        }
-        for _, imp := range f.Imports {
-            p, _ := strconv.Unquote(imp.Path.Value)
-            if strings.HasPrefix(p, oldMod) {
-                matches = append(matches, path)
-                break
-            }
-        }
-        return nil
-    })
-    return matches, err
+		fset := token.NewFileSet()
+		f, err := parser.ParseFile(fset, path, nil, parser.ImportsOnly)
+		if err != nil {
+			// skip unparsable files
+			return nil
+		}
+		for _, imp := range f.Imports {
+			p, _ := strconv.Unquote(imp.Path.Value)
+			if strings.HasPrefix(p, oldMod) {
+				matches = append(matches, path)
+				break
+			}
+		}
+		return nil
+	})
+	return matches, err
 }
 
 // updateSelfImports walks all .go files under modDir, updating imports from oldMod to newMod.

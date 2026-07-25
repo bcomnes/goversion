@@ -1,4 +1,4 @@
-.PHONY: all build deps generate help test version
+.PHONY: all build deps dev generate help publish test version
 
 CHECK_FILES ?= $$(go list ./... | grep -v /vendor/)
 
@@ -10,8 +10,8 @@ all: deps generate build test ## Run all steps
 build: ## Build all
 	go build ./...
 
-dev: ## Run the development server
-	go run ./cmd/server/main.go
+dev: ## Run the CLI
+	go run .
 
 deps: ## Download dependencies.
 	go mod tidy
@@ -29,4 +29,7 @@ version: ## Run the goversion tool. Usage: make version bump="patch" [files="-fi
 		exit 1; \
 	fi
 	@echo "Running goversion with bump: $(bump)"
-	go run main.go $(bump)
+	go run . $(files) $(bump)
+
+publish: ## Publish the current version. Usage: make publish [args="-dry"]
+	go run . publish $(args)

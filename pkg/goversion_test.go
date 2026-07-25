@@ -32,9 +32,9 @@ func TestNormalizeVersion(t *testing.T) {
 // TestParseAndFormatSemVer tests the parseSemVer and formatSemVer functions.
 func TestParseAndFormatSemVer(t *testing.T) {
 	tests := []struct {
-		input                              string
+		input                                       string
 		expectedMajor, expectedMinor, expectedPatch int
-		expectedPrerelease                 string
+		expectedPrerelease                          string
 	}{
 		{"v1.2.3", 1, 2, 3, ""},
 		{"v1.2.3-rc1", 1, 2, 3, "rc1"},
@@ -70,7 +70,7 @@ func TestBumpVersion(t *testing.T) {
 		{"v1.2.3", "premajor", "v2.0.0-0"},
 		{"v1.2.3", "preminor", "v1.3.0-0"},
 		{"v1.2.3", "prepatch", "v1.2.4-0"},
-		{"v1.2.3", "prerelease", "v1.2.4-0"}, // no prerelease exists so bump patch and attach prerelease "0"
+		{"v1.2.3", "prerelease", "v1.2.4-0"},   // no prerelease exists so bump patch and attach prerelease "0"
 		{"v1.2.3-0", "prerelease", "v1.2.3-1"}, // bump numeric part of prerelease
 	}
 	for _, tc := range tests {
@@ -434,138 +434,138 @@ func TestDryRun(t *testing.T) {
 // leaves the module path unchanged for v1,
 // but appends /vN for majors ≥ 2.
 func TestUpdateGoModSuffix(t *testing.T) {
-    tmpDir, err := os.MkdirTemp("", "goversion_mod_test")
-    if err != nil {
-        t.Fatal(err)
-    }
-    defer os.RemoveAll(tmpDir)
+	tmpDir, err := os.MkdirTemp("", "goversion_mod_test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(tmpDir)
 
-    // A minimal go.mod to start from
-    initial := `module example.com/m
+	// A minimal go.mod to start from
+	initial := `module example.com/m
 
 go 1.18
 `
-    modFile := filepath.Join(tmpDir, "go.mod")
+	modFile := filepath.Join(tmpDir, "go.mod")
 
-    tests := []struct {
-        newVersion         string
-        expectedModuleLine string
-    }{
-        {"1.0.0", "module example.com/m"},
-        {"2.0.0", "module example.com/m/v2"},
-        {"3.0.0", "module example.com/m/v3"},
-    }
+	tests := []struct {
+		newVersion         string
+		expectedModuleLine string
+	}{
+		{"1.0.0", "module example.com/m"},
+		{"2.0.0", "module example.com/m/v2"},
+		{"3.0.0", "module example.com/m/v3"},
+	}
 
-    for _, tc := range tests {
-        // Reset go.mod
-        if err := os.WriteFile(modFile, []byte(initial), 0644); err != nil {
-            t.Fatalf("writing go.mod for %q: %v", tc.newVersion, err)
-        }
-        // Run the suffix updater
-        if err := updateGoMod(tmpDir, tc.newVersion); err != nil {
-            t.Errorf("updateGoMod(%q) error: %v", tc.newVersion, err)
-            continue
-        }
-        // Read back and verify the module line
-        data, err := os.ReadFile(modFile)
-        if err != nil {
-            t.Errorf("reading go.mod for %q: %v", tc.newVersion, err)
-            continue
-        }
-        firstLine := strings.SplitN(string(data), "\n", 2)[0]
-        if firstLine != tc.expectedModuleLine {
-            t.Errorf("for version %q, got %q; want %q",
-                tc.newVersion, firstLine, tc.expectedModuleLine)
-        }
-    }
+	for _, tc := range tests {
+		// Reset go.mod
+		if err := os.WriteFile(modFile, []byte(initial), 0644); err != nil {
+			t.Fatalf("writing go.mod for %q: %v", tc.newVersion, err)
+		}
+		// Run the suffix updater
+		if err := updateGoMod(tmpDir, tc.newVersion); err != nil {
+			t.Errorf("updateGoMod(%q) error: %v", tc.newVersion, err)
+			continue
+		}
+		// Read back and verify the module line
+		data, err := os.ReadFile(modFile)
+		if err != nil {
+			t.Errorf("reading go.mod for %q: %v", tc.newVersion, err)
+			continue
+		}
+		firstLine := strings.SplitN(string(data), "\n", 2)[0]
+		if firstLine != tc.expectedModuleLine {
+			t.Errorf("for version %q, got %q; want %q",
+				tc.newVersion, firstLine, tc.expectedModuleLine)
+		}
+	}
 }
 
 // TestUpdateSelfImportsIntegration ensures that after a v2 bump,
 // imports in other packages under the same module are rewritten.
 func TestUpdateSelfImportsIntegration(t *testing.T) {
-    // 1) Setup a temporary module
-    tmpDir, err := os.MkdirTemp("", "selfimports_test")
-    if err != nil {
-        t.Fatal(err)
-    }
-    defer os.RemoveAll(tmpDir)
+	// 1) Setup a temporary module
+	tmpDir, err := os.MkdirTemp("", "selfimports_test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(tmpDir)
 
-    // write go.mod for module example.com/foo
-    modContents := `module example.com/foo
+	// write go.mod for module example.com/foo
+	modContents := `module example.com/foo
 
 go 1.18
 `
-    modFile := filepath.Join(tmpDir, "go.mod")
-    if err := os.WriteFile(modFile, []byte(modContents), 0644); err != nil {
-        t.Fatalf("writing go.mod: %v", err)
-    }
+	modFile := filepath.Join(tmpDir, "go.mod")
+	if err := os.WriteFile(modFile, []byte(modContents), 0644); err != nil {
+		t.Fatalf("writing go.mod: %v", err)
+	}
 
-    // 2) Create pkg/a/a.go
-    aDir := filepath.Join(tmpDir, "pkg", "a")
-    if err := os.MkdirAll(aDir, 0755); err != nil {
-        t.Fatal(err)
-    }
-    aSrc := `package a
+	// 2) Create pkg/a/a.go
+	aDir := filepath.Join(tmpDir, "pkg", "a")
+	if err := os.MkdirAll(aDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	aSrc := `package a
 
 func A() {}
 `
-    if err := os.WriteFile(filepath.Join(aDir, "a.go"), []byte(aSrc), 0644); err != nil {
-        t.Fatal(err)
-    }
+	if err := os.WriteFile(filepath.Join(aDir, "a.go"), []byte(aSrc), 0644); err != nil {
+		t.Fatal(err)
+	}
 
-    // 3) Create pkg/b/b.go importing example.com/foo/pkg/a
-    bDir := filepath.Join(tmpDir, "pkg", "b")
-    if err := os.MkdirAll(bDir, 0755); err != nil {
-        t.Fatal(err)
-    }
-    bSrc := `package b
+	// 3) Create pkg/b/b.go importing example.com/foo/pkg/a
+	bDir := filepath.Join(tmpDir, "pkg", "b")
+	if err := os.MkdirAll(bDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	bSrc := `package b
 
 import "example.com/foo/pkg/a"
 
 func B() { a.A() }
 `
-    bPath := filepath.Join(bDir, "b.go")
-    if err := os.WriteFile(bPath, []byte(bSrc), 0644); err != nil {
-        t.Fatal(err)
-    }
+	bPath := filepath.Join(bDir, "b.go")
+	if err := os.WriteFile(bPath, []byte(bSrc), 0644); err != nil {
+		t.Fatal(err)
+	}
 
-    // 4) Bump go.mod to v2 (via updateGoMod) and re-parse new module path
-    if err := updateGoMod(tmpDir, "2.0.0"); err != nil {
-        t.Fatalf("updateGoMod failed: %v", err)
-    }
-    data, err := os.ReadFile(modFile)
-    if err != nil {
-        t.Fatalf("reading bumped go.mod: %v", err)
-    }
-    mf, err := modfile.Parse("go.mod", data, nil)
-    if err != nil {
-        t.Fatalf("parsing bumped go.mod: %v", err)
-    }
-    newModPath := mf.Module.Mod.Path // should be "example.com/foo/v2"
+	// 4) Bump go.mod to v2 (via updateGoMod) and re-parse new module path
+	if err := updateGoMod(tmpDir, "2.0.0"); err != nil {
+		t.Fatalf("updateGoMod failed: %v", err)
+	}
+	data, err := os.ReadFile(modFile)
+	if err != nil {
+		t.Fatalf("reading bumped go.mod: %v", err)
+	}
+	mf, err := modfile.Parse("go.mod", data, nil)
+	if err != nil {
+		t.Fatalf("parsing bumped go.mod: %v", err)
+	}
+	newModPath := mf.Module.Mod.Path // should be "example.com/foo/v2"
 
-    // 5) Rewrite self-imports and collect modified files
-    modified, err := updateSelfImports(tmpDir, "example.com/foo", newModPath)
-    if err != nil {
-        t.Fatalf("updateSelfImports failed: %v", err)
-    }
+	// 5) Rewrite self-imports and collect modified files
+	modified, err := updateSelfImports(tmpDir, "example.com/foo", newModPath)
+	if err != nil {
+		t.Fatalf("updateSelfImports failed: %v", err)
+	}
 
-    // 6) Only pkg/b/b.go should have been touched
-    if !slices.Contains(modified, bPath) {
-        t.Errorf("expected %q in modified list, got: %v", bPath, modified)
-    }
-    if slices.Contains(modified, filepath.Join(aDir, "a.go")) {
-        t.Errorf("pkg/a/a.go should not be rewritten, but was")
-    }
+	// 6) Only pkg/b/b.go should have been touched
+	if !slices.Contains(modified, bPath) {
+		t.Errorf("expected %q in modified list, got: %v", bPath, modified)
+	}
+	if slices.Contains(modified, filepath.Join(aDir, "a.go")) {
+		t.Errorf("pkg/a/a.go should not be rewritten, but was")
+	}
 
-    // 7) Verify that b.go’s import line is updated to example.com/foo/v2/pkg/a
-    out, err := os.ReadFile(bPath)
-    if err != nil {
-        t.Fatalf("reading updated b.go: %v", err)
-    }
-    wantImport := fmt.Sprintf(`import "%s/pkg/a"`, newModPath)
-    if !strings.Contains(string(out), wantImport) {
-        t.Errorf("b.go import not updated, expected %q; got:\n%s", wantImport, string(out))
-    }
+	// 7) Verify that b.go’s import line is updated to example.com/foo/v2/pkg/a
+	out, err := os.ReadFile(bPath)
+	if err != nil {
+		t.Fatalf("reading updated b.go: %v", err)
+	}
+	wantImport := fmt.Sprintf(`import "%s/pkg/a"`, newModPath)
+	if !strings.Contains(string(out), wantImport) {
+		t.Errorf("b.go import not updated, expected %q; got:\n%s", wantImport, string(out))
+	}
 }
 
 // TestFindAndReplaceSemver tests the findAndReplaceSemver function with various file formats.
@@ -712,63 +712,63 @@ status: deployed`,
   legacy: 1.9.9-beta+exp.sha.5114f85`,
 		},
 		{
-			name: "zero-padded numeric prerelease",
-			content: `release = "1.0.0-0.3.7"`,
-			newVersion: "1.0.0-0.3.8",
+			name:        "zero-padded numeric prerelease",
+			content:     `release = "1.0.0-0.3.7"`,
+			newVersion:  "1.0.0-0.3.8",
 			wantContent: `release = "1.0.0-0.3.8"`,
 		},
 		{
-			name: "complex prerelease identifiers",
-			content: `version: "1.0.0-x.7.z.92"`,
-			newVersion: "1.0.0-x.7.z.93",
+			name:        "complex prerelease identifiers",
+			content:     `version: "1.0.0-x.7.z.92"`,
+			newVersion:  "1.0.0-x.7.z.93",
 			wantContent: `version: "1.0.0-x.7.z.93"`,
 		},
 		{
-			name: "prerelease with hyphens",
-			content: `{"version": "1.0.0-x-y-z.--"}`,
-			newVersion: "1.0.0",
+			name:        "prerelease with hyphens",
+			content:     `{"version": "1.0.0-x-y-z.--"}`,
+			newVersion:  "1.0.0",
 			wantContent: `{"version": "1.0.0"}`,
 		},
 		{
-			name: "semver.org example 1",
-			content: `version = "1.0.0-alpha"`,
-			newVersion: "1.0.0-alpha.1",
+			name:        "semver.org example 1",
+			content:     `version = "1.0.0-alpha"`,
+			newVersion:  "1.0.0-alpha.1",
 			wantContent: `version = "1.0.0-alpha.1"`,
 		},
 		{
-			name: "semver.org example 2",
-			content: `version = "1.0.0-alpha.1"`,
-			newVersion: "1.0.0-alpha.beta",
+			name:        "semver.org example 2",
+			content:     `version = "1.0.0-alpha.1"`,
+			newVersion:  "1.0.0-alpha.beta",
 			wantContent: `version = "1.0.0-alpha.beta"`,
 		},
 		{
-			name: "semver.org example 3",
-			content: `version = "1.0.0-0.3.7"`,
-			newVersion: "1.0.0-rc.1",
+			name:        "semver.org example 3",
+			content:     `version = "1.0.0-0.3.7"`,
+			newVersion:  "1.0.0-rc.1",
 			wantContent: `version = "1.0.0-rc.1"`,
 		},
 		{
-			name: "semver.org example 4",
-			content: `version = "1.0.0-x.7.z.92"`,
-			newVersion: "1.0.0",
+			name:        "semver.org example 4",
+			content:     `version = "1.0.0-x.7.z.92"`,
+			newVersion:  "1.0.0",
 			wantContent: `version = "1.0.0"`,
 		},
 		{
-			name: "semver.org example 5",
-			content: `version = "1.0.0-alpha+001"`,
-			newVersion: "1.0.0",
+			name:        "semver.org example 5",
+			content:     `version = "1.0.0-alpha+001"`,
+			newVersion:  "1.0.0",
 			wantContent: `version = "1.0.0"`,
 		},
 		{
-			name: "semver.org example 6",
-			content: `version = "1.0.0+20130313144700"`,
-			newVersion: "1.0.1",
+			name:        "semver.org example 6",
+			content:     `version = "1.0.0+20130313144700"`,
+			newVersion:  "1.0.1",
 			wantContent: `version = "1.0.1"`,
 		},
 		{
-			name: "semver.org example 7",
-			content: `version = "1.0.0-beta+exp.sha.5114f85"`,
-			newVersion: "1.0.0-beta.2",
+			name:        "semver.org example 7",
+			content:     `version = "1.0.0-beta+exp.sha.5114f85"`,
+			newVersion:  "1.0.0-beta.2",
 			wantContent: `version = "1.0.0-beta.2"`,
 		},
 		{
