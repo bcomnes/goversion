@@ -1,6 +1,7 @@
 package goversion
 
 import (
+	"context"
 	"errors"
 	"net/url"
 	"strings"
@@ -25,6 +26,9 @@ func publishGitHubRelease(workDir, remoteURL string, meta *PublishMeta, runner p
 	}
 	authOutput, err := runner.Run(workDir, nil, "gh", authArgs...)
 	if err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return publishCommandError("check GitHub authentication", authOutput, err, "gh", authArgs...)
+		}
 		meta.ReleaseStatus = PublishStepSkipped
 		warning := "GitHub release skipped because gh authentication failed; run gh auth login and retry"
 		if detail := strings.TrimSpace(string(authOutput)); detail != "" {

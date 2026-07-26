@@ -1,6 +1,8 @@
 package goversion
 
 import (
+	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -8,6 +10,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
 
 type publishTestCommand struct {
@@ -23,6 +26,8 @@ type publishTestRunner struct {
 	commands []publishTestCommand
 	calls    []publishTestCommand
 	lookErr  error
+	sleeps   []time.Duration
+	sleepErr error
 }
 
 func (runner *publishTestRunner) Run(_ string, env []string, name string, args ...string) ([]byte, error) {
@@ -69,6 +74,11 @@ func (runner *publishTestRunner) LookPath(name string) (string, error) {
 
 func (runner *publishTestRunner) TempDir(_ string) (string, error) {
 	return runner.t.TempDir(), nil
+}
+
+func (runner *publishTestRunner) Sleep(duration time.Duration) error {
+	runner.sleeps = append(runner.sleeps, duration)
+	return runner.sleepErr
 }
 
 func (runner *publishTestRunner) done() {
@@ -150,12 +160,40 @@ func TestPublishDryRunDisabledSteps(t *testing.T) {
 	tag := "v1.2.3"
 	runner := preflightRunnerWithRefs(t, dir, head, tag, "git@example.com:acme/tool.git", head, head)
 
-	meta, err := publish(PublishOptions{WorkDir: dir, DryRun: true, NoRelease: true, NoProxy: true}, runner)
+	var progress bytes.Buffer
+	meta, err := publish(PublishOptions{WorkDir: dir, DryRun: true, NoRelease: true, NoProxy: true, Progress: &progress}, runner)
 	if err != nil {
 		t.Fatalf("Publish dry run returned error: %v", err)
 	}
 	runner.done()
 	assertPublishStatuses(t, meta, PublishStepReused, PublishStepReused, PublishStepSkipped, PublishStepSkipped)
+	wantProgress := "==> Validating module and version...\n" +
+		"==> Inspecting local and remote Git state...\n" +
+		"==> Validating Git ref publication (dry run)...\n" +
+		"==> Skipping GitHub Release...\n"
+	if progress.String() != wantProgress {
+		t.Fatalf("unexpected progress output:\n%s\nwant:\n%s", progress.String(), wantProgress)
+	}
+}
+
+func TestExecPublishCommandRunnerTimeout(t *testing.T) {
+	if os.Getenv("GOVERSION_TIMEOUT_TEST_HELPER") == "1" {
+		time.Sleep(5 * time.Second)
+		return
+	}
+
+	runner := execPublishCommandRunner{ctx: context.Background(), timeout: 20 * time.Millisecond}
+	started := time.Now()
+	_, err := runner.Run("", []string{"GOVERSION_TIMEOUT_TEST_HELPER=1"}, os.Args[0], "-test.run=^TestExecPublishCommandRunnerTimeout$")
+	if err == nil || !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expected deadline exceeded, got %v", err)
+	}
+	if elapsed := time.Since(started); elapsed > 2*time.Second {
+		t.Fatalf("timed-out command took %s to return", elapsed)
+	}
+	if !strings.Contains(err.Error(), "command timed out after 20ms") {
+		t.Fatalf("timeout error is not actionable: %v", err)
+	}
 }
 
 func TestPublishRejectsModuleMajorMismatch(t *testing.T) {

@@ -1,6 +1,7 @@
 package goversion
 
 import (
+	"bytes"
 	"errors"
 	"strings"
 	"testing"
@@ -31,10 +32,38 @@ func TestSeedPublishProxy(t *testing.T) {
 	}}
 	meta := PublishMeta{ModulePath: "example.com/acme/tool", Version: "v1.2.3", ProxyStatus: PublishStepPending}
 
-	if err := seedPublishProxy(t.TempDir(), "https://proxy.example", &meta, runner, false); err != nil {
+	if err := seedPublishProxy(t.TempDir(), "https://proxy.example", &meta, runner, nil, false); err != nil {
 		t.Fatalf("seedPublishProxy returned error: %v", err)
 	}
 	runner.done()
+	if meta.ProxyStatus != PublishStepCompleted {
+		t.Fatalf("got proxy status %q, want %q", meta.ProxyStatus, PublishStepCompleted)
+	}
+}
+
+func TestSeedPublishProxyRetriesTransientFailure(t *testing.T) {
+	command := publishTestCommand{
+		name: "go",
+		args: []string{"mod", "download", "-json", "example.com/acme/tool@v1.2.3"},
+		env:  []string{"GOWORK=off", "GOPROXY=https://proxy.example"},
+	}
+	runner := &publishTestRunner{t: t, commands: []publishTestCommand{
+		{name: command.name, args: command.args, env: command.env, out: `{"Error":"reading proxy: 500 Internal Server Error"}`, err: errors.New("exit 1")},
+		{name: command.name, args: command.args, env: command.env, out: `{"Path":"example.com/acme/tool","Version":"v1.2.3"}`},
+	}}
+	meta := PublishMeta{ModulePath: "example.com/acme/tool", Version: "v1.2.3", ProxyStatus: PublishStepPending}
+	var progress bytes.Buffer
+
+	if err := seedPublishProxy(t.TempDir(), "https://proxy.example", &meta, runner, &progress, false); err != nil {
+		t.Fatalf("seedPublishProxy returned error: %v", err)
+	}
+	runner.done()
+	if len(runner.sleeps) != 1 || runner.sleeps[0].String() != "1s" {
+		t.Fatalf("unexpected retry delays: %v", runner.sleeps)
+	}
+	if !strings.Contains(progress.String(), "attempt 1/3 failed transiently; retrying in 1s") {
+		t.Fatalf("missing retry progress output: %q", progress.String())
+	}
 	if meta.ProxyStatus != PublishStepCompleted {
 		t.Fatalf("got proxy status %q, want %q", meta.ProxyStatus, PublishStepCompleted)
 	}
@@ -46,7 +75,7 @@ func TestSeedPublishProxyRejectsMismatchedResponse(t *testing.T) {
 	}}
 	meta := PublishMeta{ModulePath: "example.com/acme/tool", Version: "v1.2.3", ProxyStatus: PublishStepPending}
 
-	err := seedPublishProxy(t.TempDir(), "https://proxy.example", &meta, runner, false)
+	err := seedPublishProxy(t.TempDir(), "https://proxy.example", &meta, runner, nil, false)
 	if err == nil || !strings.Contains(err.Error(), "verify Go module proxy response") {
 		t.Fatalf("expected proxy verification error, got %v", err)
 	}
@@ -60,7 +89,7 @@ func TestSeedPublishProxyDisabled(t *testing.T) {
 	runner := &publishTestRunner{t: t}
 	meta := PublishMeta{ProxyStatus: PublishStepPending}
 
-	if err := seedPublishProxy(t.TempDir(), "https://proxy.example", &meta, runner, true); err != nil {
+	if err := seedPublishProxy(t.TempDir(), "https://proxy.example", &meta, runner, nil, true); err != nil {
 		t.Fatalf("seedPublishProxy returned error: %v", err)
 	}
 	if meta.ProxyStatus != PublishStepSkipped {
@@ -74,7 +103,7 @@ func TestSeedPublishProxyError(t *testing.T) {
 	}}
 	meta := PublishMeta{ModulePath: "example.com/acme/tool", Version: "v1.2.3", ProxyStatus: PublishStepPending}
 
-	err := seedPublishProxy(t.TempDir(), "https://proxy.example", &meta, runner, false)
+	err := seedPublishProxy(t.TempDir(), "https://proxy.example", &meta, runner, nil, false)
 	if err == nil || !strings.Contains(err.Error(), "seed Go module proxy") {
 		t.Fatalf("expected proxy error, got %v", err)
 	}
