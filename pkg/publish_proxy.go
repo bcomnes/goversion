@@ -12,6 +12,7 @@ import (
 	"time"
 )
 
+// planPublishProxy records whether proxy seeding would run during a dry run.
 func planPublishProxy(meta *PublishMeta, disabled bool) {
 	if disabled {
 		meta.ProxyStatus = PublishStepSkipped
@@ -38,6 +39,7 @@ type proxyDownloadOrigin struct {
 	Ref  string `json:"Ref,omitempty"`
 }
 
+// seedPublishProxy verifies the release through an isolated cache backed only by proxy.
 func seedPublishProxy(moduleDir, proxy string, meta *PublishMeta, runner publishCommandRunner, progress io.Writer, disabled bool) error {
 	if disabled {
 		meta.ProxyStatus = PublishStepSkipped
@@ -72,6 +74,7 @@ func seedPublishProxy(moduleDir, proxy string, meta *PublishMeta, runner publish
 	}
 }
 
+// validateProxyDownload verifies that go mod download returned the requested module version.
 func validateProxyDownload(output []byte, commandErr error, meta *PublishMeta, args []string) (proxyDownloadResponse, error) {
 	if commandErr != nil {
 		return proxyDownloadResponse{}, publishCommandError("seed Go module proxy", output, commandErr, "go", args...)
@@ -90,6 +93,7 @@ func validateProxyDownload(output []byte, commandErr error, meta *PublishMeta, a
 	return download, nil
 }
 
+// printProxyDownload writes stable fields from a validated response as indented JSON.
 func printProxyDownload(output io.Writer, download proxyDownloadResponse) {
 	if output == nil {
 		return
@@ -100,12 +104,14 @@ func printProxyDownload(output io.Writer, download proxyDownloadResponse) {
 	}
 }
 
+// waitToRetryProxy reports and applies the backoff for a transient proxy failure.
 func waitToRetryProxy(runner publishCommandRunner, progress io.Writer, attempt, maxAttempts int) error {
 	delay := time.Duration(attempt) * time.Second
 	publishProgress(progress, fmt.Sprintf("Go module proxy attempt %d/%d failed transiently; retrying in %s", attempt, maxAttempts, delay))
 	return runner.Sleep(delay)
 }
 
+// retryableProxyFailure identifies transient HTTP and network failures safe to retry.
 func retryableProxyFailure(output []byte, err error) bool {
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return false

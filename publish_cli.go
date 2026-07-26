@@ -9,6 +9,7 @@ import (
 	goversion "github.com/bcomnes/goversion/v2/pkg"
 )
 
+// runPublishCommand parses publish flags, runs publication, and reports its result.
 func runPublishCommand(arguments []string, output, errorOutput io.Writer) int {
 	flags := flag.NewFlagSet("goversion publish", flag.ContinueOnError)
 	flags.SetOutput(errorOutput)
@@ -75,6 +76,7 @@ func runPublishCommand(arguments []string, output, errorOutput io.Writer) int {
 	return 0
 }
 
+// printPublishStep formats the status of a Git publication step.
 func printPublishStep(output io.Writer, label string, status goversion.PublishStepStatus, planned, completed, reused string) {
 	detail := string(status)
 	switch status {
@@ -90,6 +92,7 @@ func printPublishStep(output io.Writer, label string, status goversion.PublishSt
 	fmt.Fprintf(output, "%-8s %s\n", label+":", detail)
 }
 
+// printReleaseStep reports whether the GitHub Release was planned, created, reused, or skipped.
 func printReleaseStep(output io.Writer, meta goversion.PublishMeta) {
 	detail := string(meta.ReleaseStatus)
 	switch meta.ReleaseStatus {
@@ -105,6 +108,7 @@ func printReleaseStep(output io.Writer, meta goversion.PublishMeta) {
 	fmt.Fprintf(output, "%-8s %s\n", "Release:", detail)
 }
 
+// printProxyStep reports proxy seeding status and the resulting documentation URL.
 func printProxyStep(output io.Writer, meta goversion.PublishMeta, proxy string) {
 	detail := string(meta.ProxyStatus)
 	switch meta.ProxyStatus {
@@ -121,6 +125,7 @@ func printProxyStep(output io.Writer, meta goversion.PublishMeta, proxy string) 
 	}
 }
 
+// printPublishUsage writes help for the publish subcommand.
 func printPublishUsage(output io.Writer, flags *flag.FlagSet) {
 	fmt.Fprintln(output, `Usage:
   goversion publish [options]

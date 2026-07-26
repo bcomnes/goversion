@@ -12,15 +12,18 @@ import (
 
 type arrayFlags []string
 
+// String returns the accumulated values for display by the flag package.
 func (flags *arrayFlags) String() string {
 	return fmt.Sprint(*flags)
 }
 
+// Set appends one occurrence of a repeatable flag.
 func (flags *arrayFlags) Set(value string) error {
 	*flags = append(*flags, value)
 	return nil
 }
 
+// runVersionCommand parses versioning flags, performs the bump, and reports its result.
 func runVersionCommand(arguments []string, output, errorOutput io.Writer) int {
 	flags := flag.NewFlagSet("goversion", flag.ContinueOnError)
 	flags.SetOutput(errorOutput)
@@ -100,6 +103,7 @@ func runVersionCommand(arguments []string, output, errorOutput io.Writer) int {
 	return 0
 }
 
+// printVersionUsage writes help for the version command.
 func printVersionUsage(output io.Writer, flags *flag.FlagSet) {
 	fmt.Fprint(output, `Usage:
   goversion [options] <version-bump>

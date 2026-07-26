@@ -13,6 +13,7 @@ type publishGitState struct {
 	remoteTagCommit    string
 }
 
+// inspectPublishGit validates local Git state and records the corresponding remote refs.
 func inspectPublishGit(workDir, modPath string, meta *PublishMeta, runner publishCommandRunner) (publishGitState, error) {
 	var state publishGitState
 
@@ -81,6 +82,7 @@ func inspectPublishGit(workDir, modPath string, meta *PublishMeta, runner publis
 	return state, nil
 }
 
+// statusForRemoteCommit reports whether a matching remote commit can be reused.
 func statusForRemoteCommit(remoteCommit, headCommit string) PublishStepStatus {
 	if remoteCommit == headCommit {
 		return PublishStepReused
@@ -88,6 +90,7 @@ func statusForRemoteCommit(remoteCommit, headCommit string) PublishStepStatus {
 	return PublishStepPlanned
 }
 
+// validatePublishGitRefs dry-runs the atomic push required by the publish plan.
 func validatePublishGitRefs(workDir string, meta *PublishMeta, state publishGitState, runner publishCommandRunner) error {
 	refspecs := publishGitRefspecs(meta, state)
 	if len(refspecs) == 0 {
@@ -101,6 +104,7 @@ func validatePublishGitRefs(workDir string, meta *PublishMeta, state publishGitS
 	return nil
 }
 
+// publishGitRefs atomically pushes missing refs and verifies their resulting commits.
 func publishGitRefs(workDir string, meta *PublishMeta, state publishGitState, runner publishCommandRunner) error {
 	refspecs := publishGitRefspecs(meta, state)
 	if len(refspecs) != 0 {
@@ -134,6 +138,7 @@ func publishGitRefs(workDir string, meta *PublishMeta, state publishGitState, ru
 	return nil
 }
 
+// publishGitRefspecs builds refspecs only for branch and tag state not already published.
 func publishGitRefspecs(meta *PublishMeta, state publishGitState) []string {
 	var refspecs []string
 	if state.remoteBranchCommit != meta.HeadCommit {
@@ -145,6 +150,7 @@ func publishGitRefspecs(meta *PublishMeta, state publishGitState) []string {
 	return refspecs
 }
 
+// inspectRemoteBranch resolves a remote branch commit, returning an empty value when absent.
 func inspectRemoteBranch(workDir, remote, branch string, runner publishCommandRunner) (string, error) {
 	args := []string{"ls-remote", "--heads", remote, "refs/heads/" + branch}
 	output, err := runner.Run(workDir, nil, "git", args...)
@@ -161,6 +167,7 @@ func inspectRemoteBranch(workDir, remote, branch string, runner publishCommandRu
 	return fields[0], nil
 }
 
+// inspectRemoteTag resolves a remote tag commit, peeling annotated tags when necessary.
 func inspectRemoteTag(workDir, remote, tag string, runner publishCommandRunner) (string, error) {
 	args := []string{"ls-remote", "--tags", remote, "refs/tags/" + tag, "refs/tags/" + tag + "^{}"}
 	output, err := runner.Run(workDir, nil, "git", args...)

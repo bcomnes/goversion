@@ -115,6 +115,7 @@ type publishCommandOutput struct {
 	streamed io.Writer
 }
 
+// Write captures command output and optionally mirrors it to the progress writer.
 func (output *publishCommandOutput) Write(data []byte) (int, error) {
 	_, _ = output.captured.Write(data)
 	if output.streamed != nil {
@@ -123,14 +124,17 @@ func (output *publishCommandOutput) Write(data []byte) (int, error) {
 	return len(data), nil
 }
 
+// Run executes a command while streaming and capturing its combined output.
 func (runner execPublishCommandRunner) Run(dir string, env []string, name string, args ...string) ([]byte, error) {
 	return runner.run(dir, env, runner.output, name, args...)
 }
 
+// RunCaptured executes a command without streaming its captured output.
 func (runner execPublishCommandRunner) RunCaptured(dir string, env []string, name string, args ...string) ([]byte, error) {
 	return runner.run(dir, env, nil, name, args...)
 }
 
+// run applies the configured cancellation, timeout, environment, and output handling.
 func (runner execPublishCommandRunner) run(dir string, env []string, streamed io.Writer, name string, args ...string) ([]byte, error) {
 	parent := runner.ctx
 	if parent == nil {
@@ -160,14 +164,17 @@ func (runner execPublishCommandRunner) run(dir string, env []string, streamed io
 	return output.captured.Bytes(), err
 }
 
+// LookPath resolves an executable using the process search path.
 func (execPublishCommandRunner) LookPath(name string) (string, error) {
 	return exec.LookPath(name)
 }
 
+// TempDir creates an isolated temporary directory for publication work.
 func (execPublishCommandRunner) TempDir(pattern string) (string, error) {
 	return os.MkdirTemp("", pattern)
 }
 
+// Sleep waits for duration or returns early when the publish context is canceled.
 func (runner execPublishCommandRunner) Sleep(duration time.Duration) error {
 	ctx := runner.ctx
 	if ctx == nil {
@@ -204,6 +211,7 @@ func PublishContext(ctx context.Context, options PublishOptions) (PublishMeta, e
 	return publish(options, execPublishCommandRunner{ctx: ctx, timeout: timeout, output: options.Progress})
 }
 
+// publish coordinates publication using an injectable command runner.
 func publish(options PublishOptions, runner publishCommandRunner) (PublishMeta, error) {
 	meta := PublishMeta{
 		BranchStatus:  PublishStepPending,
@@ -313,12 +321,14 @@ func publish(options PublishOptions, runner publishCommandRunner) (PublishMeta, 
 	return meta, nil
 }
 
+// publishProgress emits a formatted phase or retry message when output is enabled.
 func publishProgress(output io.Writer, message string) {
 	if output != nil {
 		fmt.Fprintf(output, "==> %s...\n", message)
 	}
 }
 
+// moduleVersionTag returns the release tag after rejecting unsupported nested modules.
 func moduleVersionTag(gitRoot, moduleDir, version string) (string, error) {
 	relative, err := filepath.Rel(gitRoot, moduleDir)
 	if err != nil {
@@ -330,6 +340,7 @@ func moduleVersionTag(gitRoot, moduleDir, version string) (string, error) {
 	return version, nil
 }
 
+// findAndParseGoMod finds the nearest go.mod and validates its module path.
 func findAndParseGoMod(start string) (string, string, error) {
 	dir := start
 	for {
@@ -359,6 +370,7 @@ func findAndParseGoMod(start string) (string, string, error) {
 	}
 }
 
+// readPublishVersion extracts the string-literal Version declaration from Go source.
 func readPublishVersion(path string) (string, error) {
 	file, err := parser.ParseFile(token.NewFileSet(), path, nil, 0)
 	if err != nil {
@@ -393,6 +405,7 @@ func readPublishVersion(path string) (string, error) {
 	return "", fmt.Errorf("Version string declaration not found in %q", path)
 }
 
+// validateModuleMajor checks that version matches the module path's major-version suffix.
 func validateModuleMajor(modulePath, version string) error {
 	_, pathMajor, ok := module.SplitPathVersion(modulePath)
 	if !ok {
@@ -404,6 +417,7 @@ func validateModuleMajor(modulePath, version string) error {
 	return nil
 }
 
+// publishCommandError adds command and captured-output context to an execution failure.
 func publishCommandError(action string, output []byte, err error, name string, args ...string) error {
 	command := strings.Join(append([]string{name}, args...), " ")
 	detail := strings.TrimSpace(string(output))
