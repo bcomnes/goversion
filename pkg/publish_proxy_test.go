@@ -13,7 +13,7 @@ func proxyTestCommand(output string, err error) publishTestCommand {
 	return publishTestCommand{
 		name: "go",
 		args: []string{"mod", "download", "-json", "example.com/acme/tool@v1.2.3"},
-		env:  []string{"GOWORK=off", "GOPROXY=https://proxy.example"},
+		env:  []string{"GOWORK=off", "GOSUMDB=off", "GOPROXY=https://proxy.example"},
 		out:  output,
 		err:  err,
 	}
@@ -72,8 +72,14 @@ func TestSeedPublishProxyRetriesTransientFailure(t *testing.T) {
 	if len(runner.sleeps) != 1 || runner.sleeps[0] != time.Second {
 		t.Fatalf("unexpected retry delays: %v", runner.sleeps)
 	}
-	if !strings.Contains(progress.String(), "attempt 1/3 failed transiently; retrying in 1s") {
-		t.Fatalf("missing retry progress output: %q", progress.String())
+	for _, message := range []string{
+		"Go module proxy attempt 1/3...",
+		"attempt 1/3 failed transiently; retrying in 1s",
+		"Go module proxy attempt 2/3...",
+	} {
+		if !strings.Contains(progress.String(), message) {
+			t.Fatalf("proxy progress does not contain %q: %q", message, progress.String())
+		}
 	}
 	if meta.ProxyStatus != PublishStepCompleted {
 		t.Fatalf("got proxy status %q, want %q", meta.ProxyStatus, PublishStepCompleted)

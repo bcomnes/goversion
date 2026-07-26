@@ -110,7 +110,7 @@ func TestPublishSuccessStatuses(t *testing.T) {
 		publishTestCommand{name: "gh", args: []string{"repo", "view", remoteURL, "--json", "nameWithOwner", "--jq", ".nameWithOwner"}, out: "acme/tool\n"},
 		publishTestCommand{name: "gh", args: []string{"release", "view", tag, "--repo", "github.com/acme/tool", "--json", "url", "--jq", ".url"}, out: "release not found\n", err: errors.New("not found")},
 		publishTestCommand{name: "gh", args: []string{"release", "create", tag, "--verify-tag", "--generate-notes", "--title", tag, "--repo", "github.com/acme/tool", "--prerelease"}, out: "https://github.com/acme/tool/releases/tag/" + tag + "\n"},
-		publishTestCommand{name: "go", args: []string{"mod", "download", "-json", "example.com/acme/tool/v2@" + tag}, env: []string{"GOWORK=off", "GOPROXY=https://proxy.golang.org"}, out: "{\"Path\":\"example.com/acme/tool/v2\",\"Version\":\"" + tag + "\"}\n"},
+		publishTestCommand{name: "go", args: []string{"mod", "download", "-json", "example.com/acme/tool/v2@" + tag}, env: []string{"GOWORK=off", "GOSUMDB=off", "GOPROXY=https://proxy.golang.org"}, out: "{\"Path\":\"example.com/acme/tool/v2\",\"Version\":\"" + tag + "\"}\n"},
 	)
 
 	meta, err := publish(PublishOptions{WorkDir: dir}, runner)
