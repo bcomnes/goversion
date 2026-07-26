@@ -13,8 +13,10 @@ func TestCLIPublishHelp(t *testing.T) {
 	if err != nil {
 		t.Fatalf("publish help failed: %v\n%s", err, out)
 	}
-	if !strings.Contains(out, "goversion publish [options]") {
-		t.Errorf("expected publish help output, got:\n%s", out)
+	for _, want := range []string{"goversion publish [options]", "-timeout duration"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("publish help does not contain %q:\n%s", want, out)
+		}
 	}
 }
 
@@ -63,7 +65,7 @@ func TestCLIPublishToLocalRemote(t *testing.T) {
 	if err != nil {
 		t.Fatalf("publish failed: %v\n%s", err, output)
 	}
-	if !strings.Contains(string(output), "Go module published successfully!") {
+	if !strings.Contains(string(output), "Go module published successfully!") || !strings.Contains(string(output), "==> Validating module and version...") {
 		t.Fatalf("unexpected publish output:\n%s", output)
 	}
 

@@ -21,9 +21,10 @@ import (
 )
 
 const (
-	defaultPublishRemote  = "origin"
-	defaultPublishProxy   = "https://proxy.golang.org"
-	defaultPublishTimeout = 2 * time.Minute
+	defaultPublishRemote    = "origin"
+	defaultPublishProxy     = "https://proxy.golang.org"
+	defaultPublishTimeout   = 2 * time.Minute
+	publishCommandWaitDelay = time.Second
 )
 
 // PublishStepStatus describes the state of one step in a publish operation.
@@ -63,7 +64,7 @@ type PublishOptions struct {
 	// It defaults to two minutes. A negative value disables the timeout.
 	Timeout time.Duration
 	// Progress receives status messages and live stdout and stderr from external commands.
-	// It may be nil to disable progress and command output.
+	// Writes are best effort. It may be nil to disable progress and command output.
 	Progress io.Writer
 }
 
@@ -108,35 +109,46 @@ type execPublishCommandRunner struct {
 	output  io.Writer
 }
 
-func (runner execPublishCommandRunner) Run(dir string, env []string, name string, args ...string) ([]byte, error) {
-	ctx := runner.ctx
-	if ctx == nil {
-		ctx = context.Background()
+type publishCommandOutput struct {
+	captured bytes.Buffer
+	streamed io.Writer
+}
+
+func (output *publishCommandOutput) Write(data []byte) (int, error) {
+	_, _ = output.captured.Write(data)
+	if output.streamed != nil {
+		_, _ = output.streamed.Write(data)
 	}
+	return len(data), nil
+}
+
+func (runner execPublishCommandRunner) Run(dir string, env []string, name string, args ...string) ([]byte, error) {
+	parent := runner.ctx
+	if parent == nil {
+		parent = context.Background()
+	}
+	ctx := parent
 	cancel := func() {}
 	if runner.timeout > 0 {
-		ctx, cancel = context.WithTimeout(ctx, runner.timeout)
+		ctx, cancel = context.WithTimeout(parent, runner.timeout)
 	}
 	defer cancel()
 
+	output := publishCommandOutput{streamed: runner.output}
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), env...)
-	var captured bytes.Buffer
-	var output io.Writer = &captured
-	if runner.output != nil {
-		output = io.MultiWriter(&captured, runner.output)
-	}
-	cmd.Stdout = output
-	cmd.Stderr = output
+	cmd.Stdout = &output
+	cmd.Stderr = &output
+	cmd.WaitDelay = publishCommandWaitDelay
 	err := cmd.Run()
-	if ctxErr := ctx.Err(); ctxErr != nil {
-		if runner.timeout > 0 && ctxErr == context.DeadlineExceeded {
-			return captured.Bytes(), fmt.Errorf("command timed out after %s: %w", runner.timeout, ctxErr)
-		}
-		return captured.Bytes(), ctxErr
+	if parentErr := parent.Err(); parentErr != nil {
+		return output.captured.Bytes(), parentErr
 	}
-	return captured.Bytes(), err
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return output.captured.Bytes(), fmt.Errorf("command timed out after %s: %w", runner.timeout, ctxErr)
+	}
+	return output.captured.Bytes(), err
 }
 
 func (execPublishCommandRunner) LookPath(name string) (string, error) {
