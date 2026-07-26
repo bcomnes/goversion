@@ -176,6 +176,29 @@ func TestPublishDryRunDisabledSteps(t *testing.T) {
 	}
 }
 
+func TestExecPublishCommandRunnerStreamsOutput(t *testing.T) {
+	if os.Getenv("GOVERSION_OUTPUT_TEST_HELPER") == "1" {
+		fmt.Fprintln(os.Stdout, "child stdout")
+		fmt.Fprintln(os.Stderr, "child stderr")
+		return
+	}
+
+	var streamed bytes.Buffer
+	runner := execPublishCommandRunner{ctx: context.Background(), timeout: time.Second, output: &streamed}
+	output, err := runner.Run("", []string{"GOVERSION_OUTPUT_TEST_HELPER=1"}, os.Args[0], "-test.run=^TestExecPublishCommandRunnerStreamsOutput$")
+	if err != nil {
+		t.Fatalf("helper command failed: %v", err)
+	}
+	for _, want := range []string{"child stdout", "child stderr"} {
+		if !strings.Contains(string(output), want) {
+			t.Errorf("captured output does not contain %q: %q", want, output)
+		}
+		if !strings.Contains(streamed.String(), want) {
+			t.Errorf("streamed output does not contain %q: %q", want, streamed.String())
+		}
+	}
+}
+
 func TestExecPublishCommandRunnerTimeout(t *testing.T) {
 	if os.Getenv("GOVERSION_TIMEOUT_TEST_HELPER") == "1" {
 		time.Sleep(5 * time.Second)

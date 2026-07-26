@@ -1,6 +1,7 @@
 package goversion
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"go/ast"
@@ -61,8 +62,8 @@ type PublishOptions struct {
 	// Timeout limits each external git, gh, and go command.
 	// It defaults to two minutes. A negative value disables the timeout.
 	Timeout time.Duration
-	// Progress receives status messages before each publish phase.
-	// It may be nil to disable progress output.
+	// Progress receives status messages and live stdout and stderr from external commands.
+	// It may be nil to disable progress and command output.
 	Progress io.Writer
 }
 
@@ -104,6 +105,7 @@ type publishCommandRunner interface {
 type execPublishCommandRunner struct {
 	ctx     context.Context
 	timeout time.Duration
+	output  io.Writer
 }
 
 func (runner execPublishCommandRunner) Run(dir string, env []string, name string, args ...string) ([]byte, error) {
@@ -120,14 +122,21 @@ func (runner execPublishCommandRunner) Run(dir string, env []string, name string
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), env...)
-	output, err := cmd.CombinedOutput()
+	var captured bytes.Buffer
+	var output io.Writer = &captured
+	if runner.output != nil {
+		output = io.MultiWriter(&captured, runner.output)
+	}
+	cmd.Stdout = output
+	cmd.Stderr = output
+	err := cmd.Run()
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		if runner.timeout > 0 && ctxErr == context.DeadlineExceeded {
-			return output, fmt.Errorf("command timed out after %s: %w", runner.timeout, ctxErr)
+			return captured.Bytes(), fmt.Errorf("command timed out after %s: %w", runner.timeout, ctxErr)
 		}
-		return output, ctxErr
+		return captured.Bytes(), ctxErr
 	}
-	return output, err
+	return captured.Bytes(), err
 }
 
 func (execPublishCommandRunner) LookPath(name string) (string, error) {
@@ -171,7 +180,7 @@ func PublishContext(ctx context.Context, options PublishOptions) (PublishMeta, e
 	if timeout == 0 {
 		timeout = defaultPublishTimeout
 	}
-	return publish(options, execPublishCommandRunner{ctx: ctx, timeout: timeout})
+	return publish(options, execPublishCommandRunner{ctx: ctx, timeout: timeout, output: options.Progress})
 }
 
 func publish(options PublishOptions, runner publishCommandRunner) (PublishMeta, error) {
