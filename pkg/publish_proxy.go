@@ -43,8 +43,9 @@ func seedPublishProxy(moduleDir, proxy string, meta *PublishMeta, runner publish
 	const maxAttempts = 3
 	moduleVersion := meta.ModulePath + "@" + meta.Version
 	args := []string{"mod", "download", "-json", moduleVersion}
-	env := []string{"GOWORK=off", "GOPROXY=" + proxy, "GOMODCACHE=" + moduleCache}
+	env := []string{"GOWORK=off", "GOSUMDB=off", "GOPROXY=" + proxy, "GOMODCACHE=" + moduleCache}
 	for attempt := 1; ; attempt++ {
+		publishProgress(progress, fmt.Sprintf("Go module proxy attempt %d/%d", attempt, maxAttempts))
 		output, commandErr := runner.Run(moduleDir, env, "go", args...)
 		attemptErr := validateProxyDownload(output, commandErr, meta, args)
 		if attemptErr == nil {
