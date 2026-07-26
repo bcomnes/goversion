@@ -243,7 +243,8 @@ goversion publish
 If `gh` is missing or unauthenticated, publishing continues without a GitHub Release and prints an actionable warning.
 A failure from an available and authenticated `gh` command remains fatal so a real release error is not silently ignored.
 Use `-no-release` to intentionally omit the GitHub Release or `-no-proxy` for a private module that should not reach the public proxy.
-The CLI prints each phase before starting it and streams stdout and stderr from each external `git`, `gh`, or `go` command as it runs.
+The CLI prints each phase before starting it and streams useful stdout and stderr from external `git`, `gh`, and `go` commands as they run.
+Machine-readable proxy output is captured and displayed as curated JSON without temporary cache paths.
 Each external command has a two-minute timeout by default.
 Proxy seeding reports each attempt and retries recognized transient HTTP and network failures up to three times with short backoff.
 It disables checksum-database lookup for this isolated fetch so `sum.golang.org` availability cannot block verification of the configured module proxy.
