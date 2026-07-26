@@ -53,6 +53,10 @@ func (runner *publishTestRunner) Run(_ string, env []string, name string, args .
 	return []byte(expected.out), expected.err
 }
 
+func (runner *publishTestRunner) RunCaptured(dir string, env []string, name string, args ...string) ([]byte, error) {
+	return runner.Run(dir, env, name, args...)
+}
+
 func publishTestEnvironmentsEqual(actual, expected []string) bool {
 	var filtered []string
 	hasModuleCache := false
@@ -211,6 +215,15 @@ func TestExecPublishCommandRunnerStreamsOutput(t *testing.T) {
 		if !strings.Contains(streamed.String(), want) {
 			t.Errorf("streamed output does not contain %q: %q", want, streamed.String())
 		}
+	}
+
+	streamed.Reset()
+	output, err = runner.RunCaptured("", []string{"GOVERSION_OUTPUT_TEST_HELPER=1"}, os.Args[0], "-test.run=^TestExecPublishCommandRunnerStreamsOutput$")
+	if err != nil {
+		t.Fatalf("captured helper command failed: %v", err)
+	}
+	if streamed.Len() != 0 || !strings.Contains(string(output), "child stdout") {
+		t.Fatalf("captured command output was streamed=%q or not returned=%q", streamed.String(), output)
 	}
 }
 

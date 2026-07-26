@@ -98,6 +98,7 @@ type PublishMeta struct {
 
 type publishCommandRunner interface {
 	Run(dir string, env []string, name string, args ...string) ([]byte, error)
+	RunCaptured(dir string, env []string, name string, args ...string) ([]byte, error)
 	LookPath(name string) (string, error)
 	TempDir(pattern string) (string, error)
 	Sleep(duration time.Duration) error
@@ -123,6 +124,14 @@ func (output *publishCommandOutput) Write(data []byte) (int, error) {
 }
 
 func (runner execPublishCommandRunner) Run(dir string, env []string, name string, args ...string) ([]byte, error) {
+	return runner.run(dir, env, runner.output, name, args...)
+}
+
+func (runner execPublishCommandRunner) RunCaptured(dir string, env []string, name string, args ...string) ([]byte, error) {
+	return runner.run(dir, env, nil, name, args...)
+}
+
+func (runner execPublishCommandRunner) run(dir string, env []string, streamed io.Writer, name string, args ...string) ([]byte, error) {
 	parent := runner.ctx
 	if parent == nil {
 		parent = context.Background()
@@ -134,7 +143,7 @@ func (runner execPublishCommandRunner) Run(dir string, env []string, name string
 	}
 	defer cancel()
 
-	output := publishCommandOutput{streamed: runner.output}
+	output := publishCommandOutput{streamed: streamed}
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), env...)

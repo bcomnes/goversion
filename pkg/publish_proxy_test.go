@@ -44,16 +44,25 @@ func TestPlanPublishProxy(t *testing.T) {
 
 func TestSeedPublishProxy(t *testing.T) {
 	runner := &publishTestRunner{t: t, commands: []publishTestCommand{
-		proxyTestCommand(`{"Path":"example.com/acme/tool","Version":"v1.2.3"}`, nil),
+		proxyTestCommand(`{"Path":"example.com/acme/tool","Version":"v1.2.3","Info":"/tmp/cache/v1.2.3.info","Sum":"h1:module","GoModSum":"h1:gomod","Origin":{"VCS":"git","URL":"https://example.com/acme/tool","Hash":"abc123","Ref":"refs/tags/v1.2.3"}}`, nil),
 	}}
 	meta := proxyTestMeta()
+	var progress bytes.Buffer
 
-	if err := seedPublishProxy(t.TempDir(), "https://proxy.example", &meta, runner, nil, false); err != nil {
+	if err := seedPublishProxy(t.TempDir(), "https://proxy.example", &meta, runner, &progress, false); err != nil {
 		t.Fatalf("seedPublishProxy returned error: %v", err)
 	}
 	runner.done()
 	if meta.ProxyStatus != PublishStepCompleted {
 		t.Fatalf("got proxy status %q, want %q", meta.ProxyStatus, PublishStepCompleted)
+	}
+	for _, want := range []string{`"Path": "example.com/acme/tool"`, `"Sum": "h1:module"`, `"Origin": {`} {
+		if !strings.Contains(progress.String(), want) {
+			t.Errorf("formatted proxy output does not contain %q: %s", want, progress.String())
+		}
+	}
+	if strings.Contains(progress.String(), "Info") || strings.Contains(progress.String(), "/tmp/cache") {
+		t.Errorf("formatted proxy output contains temporary cache details: %s", progress.String())
 	}
 }
 
