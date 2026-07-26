@@ -1,6 +1,7 @@
 package goversion
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"testing"
@@ -39,6 +40,22 @@ func TestPublishGitHubUnavailable(t *testing.T) {
 				t.Fatalf("unexpected release metadata: %+v", meta)
 			}
 		})
+	}
+}
+
+func TestPublishGitHubAuthenticationTimeoutIsFatal(t *testing.T) {
+	runner := &publishTestRunner{t: t, commands: []publishTestCommand{
+		{name: "gh", args: []string{"auth", "status", "--hostname", "example.com"}, err: context.DeadlineExceeded},
+	}}
+	meta := PublishMeta{Tag: "v1.2.3", Version: "v1.2.3", ReleaseStatus: PublishStepPending}
+
+	err := publishGitHubRelease(t.TempDir(), "git@example.com:acme/tool.git", &meta, runner, false, false)
+	if err == nil || !errors.Is(err, context.DeadlineExceeded) || !strings.Contains(err.Error(), "check GitHub authentication") {
+		t.Fatalf("expected fatal authentication timeout, got %v", err)
+	}
+	runner.done()
+	if meta.ReleaseStatus != PublishStepPending || len(meta.Warnings) != 0 {
+		t.Fatalf("authentication timeout was incorrectly skipped: %+v", meta)
 	}
 }
 

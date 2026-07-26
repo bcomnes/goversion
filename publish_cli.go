@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"time"
 
 	goversion "github.com/bcomnes/goversion/v2/pkg"
 )
@@ -15,6 +16,7 @@ func runPublishCommand(arguments []string, output, errorOutput io.Writer) int {
 	workDir := flags.String("workdir", ".", "Go module working directory")
 	remote := flags.String("remote", "origin", "Git remote to publish to")
 	proxy := flags.String("proxy", "https://proxy.golang.org", "Go module proxy to seed after publishing")
+	timeout := flags.Duration("timeout", 2*time.Minute, "Maximum duration of each external command; use a negative duration to disable")
 	dryRun := flags.Bool("dry", false, "Validate and preview publishing without changing remote state")
 	noProxy := flags.Bool("no-proxy", false, "Push and create the GitHub release without seeding a Go module proxy")
 	noRelease := flags.Bool("no-release", false, "Push and seed the Go proxy without creating a GitHub Release")
@@ -45,6 +47,8 @@ func runPublishCommand(arguments []string, output, errorOutput io.Writer) int {
 		DryRun:      *dryRun,
 		NoProxy:     *noProxy,
 		NoRelease:   *noRelease,
+		Timeout:     *timeout,
+		Progress:    errorOutput,
 	})
 	if err != nil {
 		fmt.Fprintln(errorOutput, "Error:", err)

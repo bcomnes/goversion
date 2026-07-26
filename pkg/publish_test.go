@@ -1,14 +1,25 @@
 package goversion
 
 import (
+	"bytes"
+	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
+
+type failingWriter struct{}
+
+func (failingWriter) Write([]byte) (int, error) {
+	return 0, errors.New("write failed")
+}
 
 type publishTestCommand struct {
 	name string
@@ -23,6 +34,8 @@ type publishTestRunner struct {
 	commands []publishTestCommand
 	calls    []publishTestCommand
 	lookErr  error
+	sleeps   []time.Duration
+	sleepErr error
 }
 
 func (runner *publishTestRunner) Run(_ string, env []string, name string, args ...string) ([]byte, error) {
@@ -69,6 +82,11 @@ func (runner *publishTestRunner) LookPath(name string) (string, error) {
 
 func (runner *publishTestRunner) TempDir(_ string) (string, error) {
 	return runner.t.TempDir(), nil
+}
+
+func (runner *publishTestRunner) Sleep(duration time.Duration) error {
+	runner.sleeps = append(runner.sleeps, duration)
+	return runner.sleepErr
 }
 
 func (runner *publishTestRunner) done() {
@@ -150,12 +168,115 @@ func TestPublishDryRunDisabledSteps(t *testing.T) {
 	tag := "v1.2.3"
 	runner := preflightRunnerWithRefs(t, dir, head, tag, "git@example.com:acme/tool.git", head, head)
 
-	meta, err := publish(PublishOptions{WorkDir: dir, DryRun: true, NoRelease: true, NoProxy: true}, runner)
+	var progress bytes.Buffer
+	meta, err := publish(PublishOptions{WorkDir: dir, DryRun: true, NoRelease: true, NoProxy: true, Progress: &progress}, runner)
 	if err != nil {
 		t.Fatalf("Publish dry run returned error: %v", err)
 	}
 	runner.done()
 	assertPublishStatuses(t, meta, PublishStepReused, PublishStepReused, PublishStepSkipped, PublishStepSkipped)
+	for _, message := range []string{
+		"Validating module and version",
+		"Inspecting local and remote Git state",
+		"Validating Git ref publication (dry run)",
+		"Skipping GitHub Release",
+	} {
+		if !strings.Contains(progress.String(), message) {
+			t.Errorf("progress output does not contain %q: %q", message, progress.String())
+		}
+	}
+}
+
+func TestExecPublishCommandRunnerStreamsOutput(t *testing.T) {
+	if os.Getenv("GOVERSION_OUTPUT_TEST_HELPER") == "1" {
+		fmt.Fprintln(os.Stdout, "child stdout")
+		fmt.Fprintln(os.Stderr, "child stderr")
+		return
+	}
+
+	var streamed bytes.Buffer
+	runner := execPublishCommandRunner{
+		ctx:     context.Background(),
+		timeout: 10 * time.Second,
+		output:  io.MultiWriter(&streamed, failingWriter{}),
+	}
+	output, err := runner.Run("", []string{"GOVERSION_OUTPUT_TEST_HELPER=1"}, os.Args[0], "-test.run=^TestExecPublishCommandRunnerStreamsOutput$")
+	if err != nil {
+		t.Fatalf("helper command failed: %v", err)
+	}
+	for _, want := range []string{"child stdout", "child stderr"} {
+		if !strings.Contains(string(output), want) {
+			t.Errorf("captured output does not contain %q: %q", want, output)
+		}
+		if !strings.Contains(streamed.String(), want) {
+			t.Errorf("streamed output does not contain %q: %q", want, streamed.String())
+		}
+	}
+}
+
+func TestExecPublishCommandRunnerTimeout(t *testing.T) {
+	if os.Getenv("GOVERSION_TIMEOUT_TEST_HELPER") == "1" {
+		time.Sleep(5 * time.Second)
+		return
+	}
+
+	runner := execPublishCommandRunner{ctx: context.Background(), timeout: 20 * time.Millisecond}
+	started := time.Now()
+	_, err := runner.Run("", []string{"GOVERSION_TIMEOUT_TEST_HELPER=1"}, os.Args[0], "-test.run=^TestExecPublishCommandRunnerTimeout$")
+	if err == nil || !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expected deadline exceeded, got %v", err)
+	}
+	if elapsed := time.Since(started); elapsed > 2*time.Second {
+		t.Fatalf("timed-out command took %s to return", elapsed)
+	}
+	if !strings.Contains(err.Error(), "command timed out after 20ms") {
+		t.Fatalf("timeout error is not actionable: %v", err)
+	}
+}
+
+func TestExecPublishCommandRunnerBoundsInheritedOutput(t *testing.T) {
+	if os.Getenv("GOVERSION_WAIT_TEST_GRANDCHILD") == "1" {
+		for {
+			if _, err := os.Stdout.Write([]byte(".")); err != nil {
+				return
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+	if os.Getenv("GOVERSION_WAIT_TEST_CHILD") == "1" {
+		child := exec.Command(os.Args[0], "-test.run=^TestExecPublishCommandRunnerBoundsInheritedOutput$")
+		child.Env = append(os.Environ(), "GOVERSION_WAIT_TEST_GRANDCHILD=1")
+		child.Stdout = os.Stdout
+		child.Stderr = os.Stderr
+		if err := child.Start(); err != nil {
+			t.Fatal(err)
+		}
+		return
+	}
+
+	runner := execPublishCommandRunner{ctx: context.Background(), timeout: 10 * time.Second}
+	started := time.Now()
+	_, err := runner.Run("", []string{"GOVERSION_WAIT_TEST_CHILD=1"}, os.Args[0], "-test.run=^TestExecPublishCommandRunnerBoundsInheritedOutput$")
+	if !errors.Is(err, exec.ErrWaitDelay) {
+		t.Fatalf("expected bounded inherited output error, got %v", err)
+	}
+	if elapsed := time.Since(started); elapsed > 5*time.Second {
+		t.Fatalf("inherited output took %s to close", elapsed)
+	}
+}
+
+func TestExecPublishCommandRunnerPreservesParentDeadline(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	runner := execPublishCommandRunner{ctx: ctx, timeout: time.Minute}
+
+	_, err := runner.Run("", []string{"GOVERSION_TIMEOUT_TEST_HELPER=1"}, os.Args[0], "-test.run=^TestExecPublishCommandRunnerTimeout$")
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expected parent deadline, got %v", err)
+	}
+	if strings.Contains(err.Error(), "command timed out after") {
+		t.Fatalf("parent deadline was mislabeled as command timeout: %v", err)
+	}
 }
 
 func TestPublishRejectsModuleMajorMismatch(t *testing.T) {

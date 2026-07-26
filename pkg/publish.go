@@ -1,15 +1,19 @@
 package goversion
 
 import (
+	"bytes"
+	"context"
 	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"golang.org/x/mod/modfile"
 	"golang.org/x/mod/module"
@@ -17,8 +21,10 @@ import (
 )
 
 const (
-	defaultPublishRemote = "origin"
-	defaultPublishProxy  = "https://proxy.golang.org"
+	defaultPublishRemote    = "origin"
+	defaultPublishProxy     = "https://proxy.golang.org"
+	defaultPublishTimeout   = 2 * time.Minute
+	publishCommandWaitDelay = time.Second
 )
 
 // PublishStepStatus describes the state of one step in a publish operation.
@@ -54,6 +60,12 @@ type PublishOptions struct {
 	NoProxy bool
 	// NoRelease skips GitHub Release creation.
 	NoRelease bool
+	// Timeout limits each external git, gh, and go command.
+	// It defaults to two minutes. A negative value disables the timeout.
+	Timeout time.Duration
+	// Progress receives status messages and live stdout and stderr from external commands.
+	// Writes are best effort. It may be nil to disable progress and command output.
+	Progress io.Writer
 }
 
 // PublishMeta describes the module release and the state of each publish step.
@@ -88,15 +100,55 @@ type publishCommandRunner interface {
 	Run(dir string, env []string, name string, args ...string) ([]byte, error)
 	LookPath(name string) (string, error)
 	TempDir(pattern string) (string, error)
+	Sleep(duration time.Duration) error
 }
 
-type execPublishCommandRunner struct{}
+type execPublishCommandRunner struct {
+	ctx     context.Context
+	timeout time.Duration
+	output  io.Writer
+}
 
-func (execPublishCommandRunner) Run(dir string, env []string, name string, args ...string) ([]byte, error) {
-	cmd := exec.Command(name, args...)
+type publishCommandOutput struct {
+	captured bytes.Buffer
+	streamed io.Writer
+}
+
+func (output *publishCommandOutput) Write(data []byte) (int, error) {
+	_, _ = output.captured.Write(data)
+	if output.streamed != nil {
+		_, _ = output.streamed.Write(data)
+	}
+	return len(data), nil
+}
+
+func (runner execPublishCommandRunner) Run(dir string, env []string, name string, args ...string) ([]byte, error) {
+	parent := runner.ctx
+	if parent == nil {
+		parent = context.Background()
+	}
+	ctx := parent
+	cancel := func() {}
+	if runner.timeout > 0 {
+		ctx, cancel = context.WithTimeout(parent, runner.timeout)
+	}
+	defer cancel()
+
+	output := publishCommandOutput{streamed: runner.output}
+	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), env...)
-	return cmd.CombinedOutput()
+	cmd.Stdout = &output
+	cmd.Stderr = &output
+	cmd.WaitDelay = publishCommandWaitDelay
+	err := cmd.Run()
+	if parentErr := parent.Err(); parentErr != nil {
+		return output.captured.Bytes(), parentErr
+	}
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return output.captured.Bytes(), fmt.Errorf("command timed out after %s: %w", runner.timeout, ctxErr)
+	}
+	return output.captured.Bytes(), err
 }
 
 func (execPublishCommandRunner) LookPath(name string) (string, error) {
@@ -105,6 +157,21 @@ func (execPublishCommandRunner) LookPath(name string) (string, error) {
 
 func (execPublishCommandRunner) TempDir(pattern string) (string, error) {
 	return os.MkdirTemp("", pattern)
+}
+
+func (runner execPublishCommandRunner) Sleep(duration time.Duration) error {
+	ctx := runner.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	timer := time.NewTimer(duration)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 // Publish publishes an existing version commit and tag as a Go module release.
@@ -116,7 +183,16 @@ func (execPublishCommandRunner) TempDir(pattern string) (string, error) {
 // warning and skips the GitHub Release. Retrying Publish after a failure reuses
 // completed Git refs and an existing GitHub Release before continuing.
 func Publish(options PublishOptions) (PublishMeta, error) {
-	return publish(options, execPublishCommandRunner{})
+	return PublishContext(context.Background(), options)
+}
+
+// PublishContext behaves like Publish and cancels active external commands when ctx is done.
+func PublishContext(ctx context.Context, options PublishOptions) (PublishMeta, error) {
+	timeout := options.Timeout
+	if timeout == 0 {
+		timeout = defaultPublishTimeout
+	}
+	return publish(options, execPublishCommandRunner{ctx: ctx, timeout: timeout, output: options.Progress})
 }
 
 func publish(options PublishOptions, runner publishCommandRunner) (PublishMeta, error) {
@@ -126,6 +202,8 @@ func publish(options PublishOptions, runner publishCommandRunner) (PublishMeta, 
 		ReleaseStatus: PublishStepPending,
 		ProxyStatus:   PublishStepPending,
 	}
+
+	publishProgress(options.Progress, "Validating module and version")
 
 	workDir := options.WorkDir
 	if workDir == "" {
@@ -179,14 +257,21 @@ func publish(options PublishOptions, runner publishCommandRunner) (PublishMeta, 
 	}
 	meta.Version = version
 
+	publishProgress(options.Progress, "Inspecting local and remote Git state")
 	gitState, err := inspectPublishGit(workDir, modPath, &meta, runner)
 	if err != nil {
 		return meta, err
 	}
 
 	if options.DryRun {
+		publishProgress(options.Progress, "Validating Git ref publication (dry run)")
 		if err := validatePublishGitRefs(workDir, &meta, gitState, runner); err != nil {
 			return meta, err
+		}
+		if options.NoRelease {
+			publishProgress(options.Progress, "Skipping GitHub Release")
+		} else {
+			publishProgress(options.Progress, "Checking GitHub Release")
 		}
 		if err := publishGitHubRelease(workDir, gitState.remoteURL, &meta, runner, options.NoRelease, true); err != nil {
 			return meta, err
@@ -195,17 +280,34 @@ func publish(options PublishOptions, runner publishCommandRunner) (PublishMeta, 
 		return meta, nil
 	}
 
+	publishProgress(options.Progress, "Publishing Git refs")
 	if err := publishGitRefs(workDir, &meta, gitState, runner); err != nil {
 		return meta, err
+	}
+	if options.NoRelease {
+		publishProgress(options.Progress, "Skipping GitHub Release")
+	} else {
+		publishProgress(options.Progress, "Creating or reusing GitHub Release")
 	}
 	if err := publishGitHubRelease(workDir, gitState.remoteURL, &meta, runner, options.NoRelease, false); err != nil {
 		return meta, err
 	}
-	if err := seedPublishProxy(filepath.Dir(modPath), proxy, &meta, runner, options.NoProxy); err != nil {
+	if options.NoProxy {
+		publishProgress(options.Progress, "Skipping Go module proxy")
+	} else {
+		publishProgress(options.Progress, "Seeding Go module proxy")
+	}
+	if err := seedPublishProxy(filepath.Dir(modPath), proxy, &meta, runner, options.Progress, options.NoProxy); err != nil {
 		return meta, err
 	}
 
 	return meta, nil
+}
+
+func publishProgress(output io.Writer, message string) {
+	if output != nil {
+		fmt.Fprintf(output, "==> %s...\n", message)
+	}
 }
 
 func moduleVersionTag(gitRoot, moduleDir, version string) (string, error) {
