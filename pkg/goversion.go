@@ -73,8 +73,7 @@ func parseSemVer(version string) (major, minor, patch int, prerelease string, er
 	return
 }
 
-// formatSemVer constructs a canonical semver string (with the "v" prefix)
-// from its components.
+// formatSemVer serializes bump calculations in the canonical form expected by x/mod/semver.
 func formatSemVer(major, minor, patch int, prerelease string) string {
 	base := fmt.Sprintf("v%d.%d.%d", major, minor, patch)
 	if prerelease != "" {
@@ -142,7 +141,7 @@ func bumpVersion(current, bump string) (string, error) {
 	return formatSemVer(major, minor, patch, prerelease), nil
 }
 
-// checkGit verifies that git is available on the system.
+// checkGit fails early when versioning cannot invoke the Git CLI.
 func checkGit() error {
 	cmd := exec.Command("git", "--version")
 	if err := cmd.Run(); err != nil {
@@ -210,6 +209,7 @@ var (
 	return os.WriteFile(path, []byte(content), 0644)
 }
 
+// updateGoMod rewrites the module path to match the major component of newVersion.
 func updateGoMod(modDir, newVersion string) error {
 	modPath := filepath.Join(modDir, "go.mod")
 	data, err := os.ReadFile(modPath)
@@ -663,7 +663,7 @@ func locateGoModDir(startDir string) (string, error) {
 	return "", os.ErrNotExist
 }
 
-// checkUncommittedFiles ensures only allowed files are modified in the working directory.
+// checkUncommittedFiles prevents a release commit from including unrelated worktree changes.
 func checkUncommittedFiles(allowed []string) error {
 	cmd := exec.Command("git", "status", "--porcelain")
 	out, err := cmd.Output()

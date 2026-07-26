@@ -9,6 +9,7 @@ import (
 	"golang.org/x/mod/semver"
 )
 
+// publishGitHubRelease plans, creates, or reuses the release associated with meta.Tag.
 func publishGitHubRelease(workDir, remoteURL string, meta *PublishMeta, runner publishCommandRunner, disabled, dryRun bool) error {
 	if disabled {
 		meta.ReleaseStatus = PublishStepSkipped
@@ -84,6 +85,7 @@ func publishGitHubRelease(workDir, remoteURL string, meta *PublishMeta, runner p
 	return publishCommandError("create GitHub release", createOutput, err, "gh", createArgs...)
 }
 
+// recordReleaseURL stores and validates a URL returned by a gh release command.
 func recordReleaseURL(meta *PublishMeta, output []byte) error {
 	meta.ReleaseURL = strings.TrimSpace(string(output))
 	if meta.ReleaseURL == "" {
@@ -92,11 +94,13 @@ func recordReleaseURL(meta *PublishMeta, output []byte) error {
 	return nil
 }
 
+// githubReleaseNotFound recognizes gh output indicating that a release is absent.
 func githubReleaseNotFound(output []byte) bool {
 	detail := strings.ToLower(string(output))
 	return strings.Contains(detail, "release not found") || strings.Contains(detail, "http 404")
 }
 
+// gitRemoteHost extracts the host from URL-style and SCP-style Git remotes.
 func gitRemoteHost(remote string) string {
 	if parsed, err := url.Parse(remote); err == nil && parsed.Hostname() != "" {
 		return parsed.Hostname()
