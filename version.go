@@ -1,5 +1,5 @@
 package main
 
 var (
-	Version = "2.2.4"
+	Version = "2.2.5"
 )
