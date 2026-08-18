@@ -21,6 +21,7 @@ func runPublishCommand(arguments []string, output, errorOutput io.Writer) int {
 	dryRun := flags.Bool("dry", false, "Validate and preview publishing without changing remote state")
 	noProxy := flags.Bool("no-proxy", false, "Push and create the GitHub release without seeding a Go module proxy")
 	noRelease := flags.Bool("no-release", false, "Push and seed the Go proxy without creating a GitHub Release")
+	majorBranch := flags.Bool("major-branch", false, "Create or advance the moving vN branch after all other publish steps succeed")
 	help := flags.Bool("help", false, "Show publish help and exit")
 	flags.Usage = func() { printPublishUsage(flags.Output(), flags) }
 
@@ -48,6 +49,7 @@ func runPublishCommand(arguments []string, output, errorOutput io.Writer) int {
 		DryRun:      *dryRun,
 		NoProxy:     *noProxy,
 		NoRelease:   *noRelease,
+		MajorBranch: *majorBranch,
 		Timeout:     *timeout,
 		Progress:    errorOutput,
 	})
@@ -73,6 +75,7 @@ func runPublishCommand(arguments []string, output, errorOutput io.Writer) int {
 	printPublishStep(output, "Tag", meta.TagStatus, "publish tag", "published", "already current")
 	printReleaseStep(output, meta)
 	printProxyStep(output, meta, *proxy)
+	printPublishStep(output, "Major", meta.MajorBranchStatus, "publish "+meta.MajorBranch, "published "+meta.MajorBranch, meta.MajorBranch+" already current")
 	return 0
 }
 
@@ -132,6 +135,7 @@ func printPublishUsage(output io.Writer, flags *flag.FlagSet) {
 
 Publishes an existing goversion commit and tag as a Go module.
 The command atomically publishes incomplete Git refs, creates or reuses a GitHub Release through gh when available, and seeds the Go module proxy.
+With -major-branch, it then creates or advances the moving vN branch used by GitHub Actions.
 
 Run goversion <version-bump>, validate the local release, then run goversion publish.
 

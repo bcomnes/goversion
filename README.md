@@ -242,6 +242,7 @@ goversion publish
 4. Atomically publishes only incomplete branch or version-tag refs to the configured remote.
 5. Creates or reuses a GitHub Release with generated notes through the authenticated `gh` CLI.
 6. Seeds and verifies the complete module through `go mod download` using the configured Go proxy.
+7. With `-major-branch`, creates or advances the moving `vN` branch for GitHub Action consumers only after every earlier step succeeds.
 
 If `gh` is missing or unauthenticated, publishing continues without a GitHub Release and prints an actionable warning.
 A failure from an available and authenticated `gh` command remains fatal so a real release error is not silently ignored.
@@ -262,11 +263,13 @@ goversion publish -proxy https://proxy.golang.org
 goversion publish -timeout 5m
 goversion publish -no-release
 goversion publish -no-proxy
+goversion publish -major-branch # publish vN (for example v2) after the release and proxy
 ```
 
 Publishing is resumable after a failure.
-Each branch, tag, GitHub Release, and proxy step reports a `planned`, `completed`, `reused`, or `skipped` status.
+Each branch, tag, GitHub Release, proxy, and moving major-branch step reports a `planned`, `completed`, `reused`, or `skipped` status.
 On retry, `goversion` skips Git refs that already point to the expected commit, reuses an existing GitHub Release, and continues with the first incomplete stage.
+The moving major branch is opt-in because it is intended for GitHub Actions referenced as `owner/action@vN`. It is derived from the validated semantic version and updated with a force-with-lease pinned to the remote value observed during preflight, preventing an unseen concurrent update from being overwritten.
 If proxy seeding was the failed stage, read-only Git and GitHub checks are repeated before retrying the proxy request.
 It reports a `pkg.go.dev` URL, but documentation indexing may complete asynchronously after the proxy accepts the module.
 

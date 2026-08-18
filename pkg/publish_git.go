@@ -11,6 +11,7 @@ type publishGitState struct {
 	remoteURL          string
 	remoteBranchCommit string
 	remoteTagCommit    string
+	remoteMajorCommit  string
 }
 
 // inspectPublishGit validates local Git state and records the corresponding remote refs.
@@ -80,6 +81,63 @@ func inspectPublishGit(workDir, modPath string, meta *PublishMeta, runner publis
 	meta.TagStatus = statusForRemoteCommit(state.remoteTagCommit, meta.HeadCommit)
 	meta.BranchStatus = statusForRemoteCommit(state.remoteBranchCommit, meta.HeadCommit)
 	return state, nil
+}
+
+// inspectPublishMajorBranch records the opt-in moving major branch checkpoint.
+func inspectPublishMajorBranch(workDir string, meta *PublishMeta, state *publishGitState, runner publishCommandRunner, enabled bool) error {
+	if !enabled {
+		meta.MajorBranchStatus = PublishStepSkipped
+		return nil
+	}
+	remoteCommit, err := inspectRemoteBranch(workDir, meta.Remote, meta.MajorBranch, runner)
+	if err != nil {
+		return err
+	}
+	state.remoteMajorCommit = remoteCommit
+	meta.MajorBranchStatus = statusForRemoteCommit(remoteCommit, meta.HeadCommit)
+	return nil
+}
+
+// publishMajorBranch validates or publishes the opt-in moving major branch using the observed remote value as a lease.
+func publishMajorBranch(workDir string, meta *PublishMeta, state publishGitState, runner publishCommandRunner, dryRun, enabled bool) error {
+	if !enabled {
+		meta.MajorBranchStatus = PublishStepSkipped
+		return nil
+	}
+	if state.remoteMajorCommit == meta.HeadCommit {
+		meta.MajorBranchStatus = PublishStepReused
+		return nil
+	}
+
+	ref := "refs/heads/" + meta.MajorBranch
+	lease := "--force-with-lease=" + ref + ":" + state.remoteMajorCommit
+	if dryRun {
+		args := []string{"push", "--dry-run", lease, meta.Remote, meta.HeadCommit + ":" + ref}
+		output, err := runner.Run(workDir, nil, "git", args...)
+		if err != nil {
+			return publishCommandError("validate moving major branch "+meta.MajorBranch, output, err, "git", args...)
+		}
+		meta.MajorBranchStatus = PublishStepPlanned
+		return nil
+	}
+
+	updateArgs := []string{"update-ref", ref, meta.HeadCommit}
+	if output, err := runner.Run(workDir, nil, "git", updateArgs...); err != nil {
+		return publishCommandError("update local moving major branch "+meta.MajorBranch, output, err, "git", updateArgs...)
+	}
+	pushArgs := []string{"push", lease, meta.Remote, ref + ":" + ref}
+	if output, err := runner.Run(workDir, nil, "git", pushArgs...); err != nil {
+		return publishCommandError("publish moving major branch "+meta.MajorBranch, output, err, "git", pushArgs...)
+	}
+	remoteCommit, err := inspectRemoteBranch(workDir, meta.Remote, meta.MajorBranch, runner)
+	if err != nil {
+		return err
+	}
+	if remoteCommit != meta.HeadCommit {
+		return fmt.Errorf("remote major branch %s on %s resolves to %q after push, expected HEAD %s", meta.MajorBranch, meta.Remote, remoteCommit, meta.HeadCommit)
+	}
+	meta.MajorBranchStatus = PublishStepCompleted
+	return nil
 }
 
 // statusForRemoteCommit reports whether a matching remote commit can be reused.

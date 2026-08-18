@@ -60,6 +60,8 @@ type PublishOptions struct {
 	NoProxy bool
 	// NoRelease skips GitHub Release creation.
 	NoRelease bool
+	// MajorBranch publishes a moving vN branch for GitHub Action consumers.
+	MajorBranch bool
 	// Timeout limits each external git, gh, and go command.
 	// It defaults to two minutes. A negative value disables the timeout.
 	Timeout time.Duration
@@ -82,6 +84,8 @@ type PublishMeta struct {
 	Branch string
 	// Remote is the Git remote used for publication.
 	Remote string
+	// MajorBranch is the moving major-version branch derived from Version, such as v2.
+	MajorBranch string
 	// BranchStatus describes whether the remote branch was planned, completed, or reused.
 	BranchStatus PublishStepStatus
 	// TagStatus describes whether the remote tag was planned, completed, or reused.
@@ -90,6 +94,8 @@ type PublishMeta struct {
 	ReleaseStatus PublishStepStatus
 	// ProxyStatus describes whether proxy seeding was planned, completed, or skipped.
 	ProxyStatus PublishStepStatus
+	// MajorBranchStatus describes whether the moving major branch was planned, completed, reused, or skipped.
+	MajorBranchStatus PublishStepStatus
 	// ReleaseURL is the URL of the created or reused GitHub Release.
 	ReleaseURL string
 	// Warnings contains non-fatal conditions encountered while publishing.
@@ -214,10 +220,11 @@ func PublishContext(ctx context.Context, options PublishOptions) (PublishMeta, e
 // publish coordinates publication using an injectable command runner.
 func publish(options PublishOptions, runner publishCommandRunner) (PublishMeta, error) {
 	meta := PublishMeta{
-		BranchStatus:  PublishStepPending,
-		TagStatus:     PublishStepPending,
-		ReleaseStatus: PublishStepPending,
-		ProxyStatus:   PublishStepPending,
+		BranchStatus:      PublishStepPending,
+		TagStatus:         PublishStepPending,
+		ReleaseStatus:     PublishStepPending,
+		ProxyStatus:       PublishStepPending,
+		MajorBranchStatus: PublishStepPending,
 	}
 
 	publishProgress(options.Progress, "Validating module and version")
@@ -273,10 +280,14 @@ func publish(options PublishOptions, runner publishCommandRunner) (PublishMeta, 
 		return meta, err
 	}
 	meta.Version = version
+	meta.MajorBranch = semver.Major(version)
 
 	publishProgress(options.Progress, "Inspecting local and remote Git state")
 	gitState, err := inspectPublishGit(workDir, modPath, &meta, runner)
 	if err != nil {
+		return meta, err
+	}
+	if err := inspectPublishMajorBranch(workDir, &meta, &gitState, runner, options.MajorBranch); err != nil {
 		return meta, err
 	}
 
@@ -294,6 +305,14 @@ func publish(options PublishOptions, runner publishCommandRunner) (PublishMeta, 
 			return meta, err
 		}
 		planPublishProxy(&meta, options.NoProxy)
+		if options.MajorBranch {
+			publishProgress(options.Progress, "Validating moving major branch publication (dry run)")
+		} else {
+			publishProgress(options.Progress, "Skipping moving major branch")
+		}
+		if err := publishMajorBranch(workDir, &meta, gitState, runner, true, options.MajorBranch); err != nil {
+			return meta, err
+		}
 		return meta, nil
 	}
 
@@ -315,6 +334,14 @@ func publish(options PublishOptions, runner publishCommandRunner) (PublishMeta, 
 		publishProgress(options.Progress, "Seeding Go module proxy")
 	}
 	if err := seedPublishProxy(filepath.Dir(modPath), proxy, &meta, runner, options.Progress, options.NoProxy); err != nil {
+		return meta, err
+	}
+	if options.MajorBranch {
+		publishProgress(options.Progress, "Publishing moving major branch")
+	} else {
+		publishProgress(options.Progress, "Skipping moving major branch")
+	}
+	if err := publishMajorBranch(workDir, &meta, gitState, runner, false, options.MajorBranch); err != nil {
 		return meta, err
 	}
 
