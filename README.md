@@ -1,6 +1,6 @@
-# goversion
+![goversion: Bump. Tag. Publish.](logos/og.png)
 
-![goversion logo](logo.png)
+# goversion
 
 [![Actions Status][action-img]][action-url]
 [![SocketDev][socket-image]][socket-url]
@@ -117,6 +117,12 @@ go get -tool github.com/bcomnes/goversion/v2
 ```
 
 ## Usage
+
+### GitHub Actions companion
+
+[`go-bump`](https://github.com/bcomnes/go-bump) is the companion GitHub Action for running a `goversion` release in CI. `goversion` remains the local-first workflow: register it as a project-pinned Go tool so contributors can create, validate, publish, and recover releases locally. `go-bump` uses that same pinned tool and adds GitHub Actions input handling, credentials, Git identity, lifecycle hooks, and outputs.
+
+See the [`go-bump` documentation](https://github.com/bcomnes/go-bump#readme) for current workflow examples, requirements, inputs, outputs, nested-module configuration, publication controls, and recovery behavior.
 
 ### Command-Line Interface
 
@@ -330,3 +336,5 @@ For detailed API documentation, visit [PkgGoDev][pkg-go-dev-url].
 ## License
 
 This project is licensed under the MIT License.
+
+![Go gopher operating the version machine](logo.png)
