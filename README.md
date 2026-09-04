@@ -1,6 +1,6 @@
-# goversion
+![goversion: Bump. Tag. Publish.](logos/og.png)
 
-![goversion logo](logo.png)
+# goversion
 
 [![Actions Status][action-img]][action-url]
 [![SocketDev][socket-image]][socket-url]
@@ -376,3 +376,5 @@ For detailed API documentation, visit [PkgGoDev][pkg-go-dev-url].
 ## License
 
 This project is licensed under the MIT License.
+
+![Go gopher operating the version machine](logo.png)
