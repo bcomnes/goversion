@@ -46,7 +46,7 @@ jobs:
       - run: make all
 
       - id: release
-        uses: bcomnes/go-bump@f6b52f1871e4298407bff134904f1fa46d9b55db # v0.0.1
+        uses: bcomnes/go-bump@v0
         with:
           version-type: ${{ inputs.version-type }}
           new-version: ${{ inputs.new-version }}

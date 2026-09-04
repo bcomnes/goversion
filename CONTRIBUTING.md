@@ -27,5 +27,5 @@ go tool github.com/bcomnes/goversion/v2 publish
 ```
 
 For hosted releases, manually dispatch `.github/workflows/release.yml` and select a version directive.
-The workflow runs the full suite, invokes the immutable `go-bump v0.0.1` action, validates the exact release commit through `make all`, and delegates Git refs, GitHub Release creation, and Go proxy verification back to `goversion publish`.
+The workflow runs the full suite, invokes the trusted moving `go-bump v0` action reference, validates the exact release commit through `make all`, and delegates Git refs, GitHub Release creation, and Go proxy verification back to `goversion publish`.
 Explicit custom versions omit the leading `v`, for example `2.5.0`.
