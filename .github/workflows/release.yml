@@ -1,0 +1,59 @@
+name: release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version-type:
+        description: Version bump
+        required: true
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+          - premajor
+          - preminor
+          - prepatch
+          - prerelease
+          - custom
+      new-version:
+        description: Explicit semantic version for custom, such as 2.5.0 (no leading v)
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: goversion-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          check-latest: true
+
+      - run: make all
+
+      - id: release
+        uses: bcomnes/go-bump@v0
+        with:
+          version-type: ${{ inputs.version-type }}
+          new-version: ${{ inputs.new-version }}
+          github-token: ${{ github.token }}
+          pre-publish: make all
+
+      - name: Release summary
+        env:
+          RELEASE_TAG: ${{ steps.release.outputs.release-tag }}
+        run: echo "Published $RELEASE_TAG"

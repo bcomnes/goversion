@@ -8,5 +8,7 @@ rules:
         # Official GitHub actions and CodeQL use major tags for compatible security updates.
         "actions/*": ref-pin
         "github/codeql-action/*": ref-pin
-        # Require immutable references for every third-party action.
+        # First-party bcomnes actions use moving major references for compatible updates.
+        "bcomnes/*": ref-pin
+        # Require immutable references for every other third-party action.
         "*": hash-pin
