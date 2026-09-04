@@ -122,47 +122,7 @@ go get -tool github.com/bcomnes/goversion/v2
 
 [`go-bump`](https://github.com/bcomnes/go-bump) is the companion GitHub Action for running a `goversion` release in CI. `goversion` remains the local-first workflow: register it as a project-pinned Go tool so contributors can create, validate, publish, and recover releases locally. `go-bump` uses that same pinned tool and adds GitHub Actions input handling, credentials, Git identity, lifecycle hooks, and outputs.
 
-After committing the `goversion` tool dependency, a release workflow can use the moving `v0` action reference:
-
-```yaml
-permissions:
-  contents: write
-
-steps:
-  - uses: actions/checkout@v7
-    with:
-      ref: ${{ github.event.repository.default_branch }}
-      fetch-depth: 0
-      persist-credentials: false
-
-  - uses: actions/setup-go@v7
-    with:
-      go-version-file: go.mod
-
-  - uses: bcomnes/go-bump@v0
-    with:
-      version-type: patch
-      github-token: ${{ github.token }}
-      pre-publish: go test ./...
-```
-
-For a nested module, set `go-version-file` to its `go.mod` and pass the module directory as `workdir`; other versioning paths are relative to that directory:
-
-```yaml
-- uses: actions/setup-go@v7
-  with:
-    go-version-file: go/go.mod
-
-- uses: bcomnes/go-bump@v0
-  with:
-    workdir: go
-    version-file: internal/version/version.go
-    version-type: patch
-    github-token: ${{ github.token }}
-    pre-publish: make release-validation
-```
-
-`goversion` derives the canonical tag, including the module-directory prefix for nested modules. For custom releases, pass a semantic version such as `0.1.0`, not a tag such as `v0.1.0`. See the [`go-bump` documentation](https://github.com/bcomnes/go-bump#readme) for its complete inputs, outputs, publication controls, and recovery behavior.
+See the [`go-bump` documentation](https://github.com/bcomnes/go-bump#readme) for current workflow examples, requirements, inputs, outputs, nested-module configuration, publication controls, and recovery behavior.
 
 ### Command-Line Interface
 
