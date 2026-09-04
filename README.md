@@ -34,7 +34,7 @@ goversion publish # publish Git refs and a GitHub Release, then seed the Go prox
 ## Features
 
 - **Semantic Version Bumping:** Support for bumping versions using keywords (major, minor, patch, premajor, preminor, prepatch, prerelease, and from-git) or setting an explicit version.
-- **Git Integration:** Automatically stages updated files, commits changes with the new version as the commit message, and tags the commit with the new version.
+- **Git Integration:** Automatically stages updated files, commits changes with the new version as the commit message, and creates the canonical Go module tag (`vX.Y.Z` at the repository root or `<module-dir>/vX.Y.Z` for a nested module).
 - **Go Module Publishing:** Validates a release, atomically publishes only incomplete Git refs, creates or reuses a GitHub Release through `gh`, and seeds the Go module proxy.
 - **CLI and Library:** Offers both a command-line interface for quick version updates and a library for integrating version management into your applications.
 - **Flexible Configuration:** Specify the path to your version file and include additional files for Git staging.
@@ -120,7 +120,7 @@ go get -tool github.com/bcomnes/goversion/v2
 
 ### Command-Line Interface
 
-The `goversion` CLI defaults to using `./version.go` as the version file, but you can override this with the `-version-file` flag. Use the `-file` flag to specify additional files to be staged.
+The `goversion` CLI defaults to the module in the current directory and `./version.go`. Use `-workdir` to select a root or nested module without changing the caller's working directory. Relative `-version-file`, `-file`, `-bump-file`, and `-post-bump` paths are resolved within that workdir.
 
 ```
 go tool github.com/bcomnes/goversion/v2 [flags] <version-bump>
@@ -129,7 +129,8 @@ go tool github.com/bcomnes/goversion/v2 publish [flags]
 
 #### Flags
 
-- `-version-file`: Path to the Go file containing the version declaration. (Default: `./version.go`)
+- `-workdir`: Go module working directory used for versioning paths, Git operations, and post-bump execution. (Default: `.`)
+- `-version-file`: Path to the Go file containing the version declaration, relative to `-workdir`. (Default: `./version.go`)
 - `-file`: Additional file to include in the commit. This flag can be used multiple times.
 - `-bump-file`: Additional Go project metadata file to scan for the first semantic version and bump. This flag can be used multiple times. Only valid semver strings are matched (no "v" prefix).
 - `-post-bump`: Script to execute after version bump but before git commit. Receives `GOVERSION_OLD_VERSION` and `GOVERSION_NEW_VERSION` environment variables. Files created or modified by the script must be specified with `-file` to be included in the commit.
@@ -183,6 +184,9 @@ The `-post-bump` flag runs a script after version bumping but before committing:
 # Bump patch version (1.2.3 → 1.2.4)
 goversion patch
 
+# Bump a nested module and create tools/widget/v1.2.4
+goversion -workdir tools/widget patch
+
 # Bump minor version (1.2.3 → 1.3.0)
 goversion minor
 
@@ -219,7 +223,7 @@ This command will:
 - Bump the version in the given file.
 - Stage the updated version file (plus any `-file` flags).
 - Commit with the new version as the commit message (no `v` prefix).
-- Tag the commit with the new version (with `v` prefix).
+- Tag the commit with the canonical module tag: `vX.Y.Z` for a root module or `<module-dir>/vX.Y.Z` for a nested module.
 - For major version bumps ≥ v2, update go.mod module path and rewrite self-imports.
 
 > **Note**: The working directory must be clean (no unstaged/uncommitted changes outside the listed files) or the command will fail to prevent accidental commits.
@@ -237,7 +241,7 @@ goversion publish
 `goversion publish` performs the following guarded steps:
 
 1. Reads the existing version from `version.go` and validates it against the module path in `go.mod`.
-2. Requires a repository-root Go module, a clean worktree, a current branch, and a matching local `vX.Y.Z` tag at `HEAD`.
+2. Requires a module within the Git repository, a clean worktree, a current branch, and its matching canonical local tag at `HEAD`.
 3. Rejects an existing remote tag when it points to a different commit.
 4. Atomically publishes only incomplete branch or version-tag refs to the configured remote.
 5. Creates or reuses a GitHub Release with generated notes through the authenticated `gh` CLI.
@@ -254,10 +258,11 @@ Proxy seeding reports each attempt and retries recognized transient HTTP and net
 It disables checksum-database lookup for this isolated fetch so `sum.golang.org` availability cannot block verification of the configured module proxy.
 Permanent module and proxy-response failures are not retried.
 Use `-timeout` to change the per-command limit or a negative duration such as `-timeout=-1s` to disable it.
-Nested Go modules are rejected because the existing versioning step creates repository-root tags.
+Nested modules are supported by passing the same module directory to versioning and publishing. For example, `goversion -workdir tools/widget patch` creates `tools/widget/vX.Y.Z`, and `goversion publish -workdir tools/widget` validates and publishes that exact tag. Version discovery filters tags by this module-directory prefix, so tags belonging to other modules are ignored.
 
 ```console
 goversion publish -dry
+goversion publish -workdir tools/widget
 goversion publish -remote upstream
 goversion publish -proxy https://proxy.golang.org
 goversion publish -timeout 5m

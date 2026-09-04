@@ -134,6 +134,32 @@ func TestPublishSuccessStatuses(t *testing.T) {
 	}
 }
 
+func TestPublishNestedModuleUsesCanonicalTag(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "tools", "widget")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.com/acme/repo/tools/widget\n\ngo 1.25\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "version.go"), []byte("package widget\n\nvar Version = \"1.2.3\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	head := "1212121212121212121212121212121212121212"
+	tag := "tools/widget/v1.2.3"
+	runner := preflightRunnerWithRefs(t, root, head, tag, "git@github.com:acme/repo.git", head, head)
+
+	meta, err := publish(PublishOptions{WorkDir: dir, DryRun: true, NoRelease: true, NoProxy: true}, runner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner.done()
+	if meta.Tag != tag {
+		t.Fatalf("Tag = %q; want %q", meta.Tag, tag)
+	}
+}
+
 func TestPublishDryRunStatusesAndNoMutation(t *testing.T) {
 	dir := writePublishFixture(t, "example.com/acme/tool", "1.2.3")
 	before, err := os.ReadFile(filepath.Join(dir, "version.go"))
@@ -338,15 +364,30 @@ func TestPublishRejectsLocalTagMismatch(t *testing.T) {
 	runner.done()
 }
 
-func TestModuleVersionTagRejectsNestedModule(t *testing.T) {
+func TestModuleVersionTag(t *testing.T) {
 	root := t.TempDir()
-	moduleDir := filepath.Join(root, "tools", "widget")
-	if err := os.MkdirAll(moduleDir, 0o755); err != nil {
-		t.Fatal(err)
+	for _, test := range []struct {
+		name      string
+		moduleDir string
+		want      string
+	}{
+		{name: "root", moduleDir: root, want: "v1.2.3"},
+		{name: "go", moduleDir: filepath.Join(root, "go"), want: "go/v1.2.3"},
+		{name: "deep", moduleDir: filepath.Join(root, "tools", "widget"), want: "tools/widget/v1.2.3"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if err := os.MkdirAll(test.moduleDir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			got, err := moduleVersionTag(root, test.moduleDir, "v1.2.3")
+			if err != nil || got != test.want {
+				t.Fatalf("moduleVersionTag() = %q, %v; want %q", got, err, test.want)
+			}
+		})
 	}
-	_, err := moduleVersionTag(root, moduleDir, "v1.2.3")
-	if err == nil || !strings.Contains(err.Error(), "nested Go module") {
-		t.Fatalf("expected nested module error, got %v", err)
+
+	if _, err := moduleVersionTag(root, filepath.Dir(root), "v1.2.3"); err == nil || !strings.Contains(err.Error(), "outside Git root") {
+		t.Fatalf("expected outside-root error, got %v", err)
 	}
 }
 
