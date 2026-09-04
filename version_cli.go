@@ -27,6 +27,7 @@ func (flags *arrayFlags) Set(value string) error {
 func runVersionCommand(arguments []string, output, errorOutput io.Writer) int {
 	flags := flag.NewFlagSet("goversion", flag.ContinueOnError)
 	flags.SetOutput(errorOutput)
+	workDir := flags.String("workdir", ".", "Go module working directory; relative file and script paths are resolved within it")
 	versionFile := flags.String("version-file", "./version.go", "Path to the Go file containing the version declaration")
 	var extraFiles arrayFlags
 	flags.Var(&extraFiles, "file", "Additional file to stage and commit. May be repeated.")
@@ -72,10 +73,17 @@ func runVersionCommand(arguments []string, output, errorOutput io.Writer) int {
 
 	var meta goversion.VersionMeta
 	var err error
+	options := goversion.VersionOptions{
+		WorkDir:        *workDir,
+		VersionFile:    *versionFile,
+		ExtraFiles:     extraFiles,
+		BumpFiles:      bumpFiles,
+		PostBumpScript: *postBump,
+	}
 	if *dryRun {
-		meta, err = goversion.DryRun(*versionFile, flags.Arg(0), bumpFiles)
+		meta, err = goversion.DryRunWithOptions(options, flags.Arg(0))
 	} else {
-		meta, err = goversion.Run(*versionFile, flags.Arg(0), extraFiles, bumpFiles, *postBump)
+		meta, err = goversion.RunWithOptions(options, flags.Arg(0))
 	}
 	if err != nil {
 		fmt.Fprintln(errorOutput, "Error:", err)
@@ -89,6 +97,7 @@ func runVersionCommand(arguments []string, output, errorOutput io.Writer) int {
 	}
 	fmt.Fprintf(output, "Old Version: %s\n", meta.OldVersion)
 	fmt.Fprintf(output, "New Version: %s\n", meta.NewVersion)
+	fmt.Fprintf(output, "Tag:         %s\n", meta.Tag)
 	fmt.Fprintf(output, "Bump Type:   %s\n", meta.BumpType)
 	if len(meta.UpdatedFiles) > 0 {
 		if *dryRun {
@@ -114,6 +123,7 @@ and tags the commit with the version prefixed with "v". For major version bumps 
 Examples:
   goversion minor
   goversion 1.2.3
+  goversion -workdir tools/widget patch
   goversion -bump-file docs/version.txt patch
   goversion -post-bump ./scripts/update-docs.sh -file docs/version.md patch
 

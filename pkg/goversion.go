@@ -27,10 +27,26 @@ type VersionMeta struct {
 	OldVersion string
 	// NewVersion is the resulting version without a leading v prefix.
 	NewVersion string
+	// Tag is the exact local Git tag for NewVersion, including any nested-module prefix.
+	Tag string
 	// BumpType identifies the directive used to select NewVersion, such as patch, explicit, or from-git.
 	BumpType string
 	// UpdatedFiles lists files written by Run or files that DryRun predicts would change.
 	UpdatedFiles []string
+}
+
+// VersionOptions configures a version bump without changing the caller's process working directory.
+type VersionOptions struct {
+	// WorkDir is the Go module working directory and defaults to the current directory.
+	WorkDir string
+	// VersionFile contains Version and defaults to ./version.go within WorkDir.
+	VersionFile string
+	// ExtraFiles are staged with the generated changes. Relative paths are resolved within WorkDir.
+	ExtraFiles []string
+	// BumpFiles have their first semantic version replaced. Relative paths are resolved within WorkDir.
+	BumpFiles []string
+	// PostBumpScript runs after updates and before commit. A relative path is resolved within WorkDir.
+	PostBumpScript string
 }
 
 // normalizeVersion ensures the version string starts with a "v" if it's not "dev".
@@ -257,11 +273,15 @@ func updateGoMod(modDir, newVersion string) error {
 // writes it into the version file, and returns it.
 // If there are no tags or git fails, it falls back to “dev”.
 func readCurrentVersion(path string) (string, error) {
+	return readCurrentVersionForModule(path, filepath.Dir(path))
+}
+
+// readCurrentVersionForModule reads Version and uses only module-specific tags when initializing a missing file.
+func readCurrentVersionForModule(path, moduleDir string) (string, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			dir := filepath.Dir(path)
-			if fromGit, gitErr := getVersionFromGitDir(dir); gitErr == nil {
+			if fromGit, gitErr := getVersionFromGitDir(moduleDir); gitErr == nil {
 				if err := writeVersionFile(path, fromGit); err != nil {
 					return "", fmt.Errorf("failed to write version file from git tag: %w", err)
 				}
@@ -288,13 +308,14 @@ func readCurrentVersion(path string) (string, error) {
 // gitCommit stages the version file (plus any extra files provided),
 // commits with a message equal to the new version (without the "v" prefix),
 // and then tags the commit with the same version prefixed by "v".
-func gitCommit(newVersion string, extraFiles []string) error {
+func gitCommit(workDir, newVersion, tag string, extraFiles []string) error {
 	// Ensure that the version file is included.
 	files := extraFiles
 
 	// Stage files.
 	addArgs := append([]string{"add"}, files...)
 	addCmd := exec.Command("git", addArgs...)
+	addCmd.Dir = workDir
 	var stderr bytes.Buffer
 	addCmd.Stderr = &stderr
 	if err := addCmd.Run(); err != nil {
@@ -304,15 +325,16 @@ func gitCommit(newVersion string, extraFiles []string) error {
 	// Commit changes.
 	commitMsg := newVersion // commit message is the new version (without "v" prefix)
 	commitCmd := exec.Command("git", "commit", "-m", commitMsg)
+	commitCmd.Dir = workDir
 	stderr.Reset()
 	commitCmd.Stderr = &stderr
 	if err := commitCmd.Run(); err != nil {
 		return fmt.Errorf("git commit failed: %v, detail: %s", err, stderr.String())
 	}
 
-	// Tag the commit with "v" prefix.
-	tagName := "v" + newVersion
-	tagCmd := exec.Command("git", "tag", tagName)
+	// Tag the commit with the canonical module tag.
+	tagCmd := exec.Command("git", "tag", tag)
+	tagCmd.Dir = workDir
 	stderr.Reset()
 	tagCmd.Stderr = &stderr
 	if err := tagCmd.Run(); err != nil {
@@ -325,14 +347,64 @@ func gitCommit(newVersion string, extraFiles []string) error {
 // getVersionFromGitDir retrieves the most recent tag from git in the given directory
 // and strips off any leading "v".
 func getVersionFromGitDir(dir string) (string, error) {
-	cmd := exec.Command("git", "describe", "--tags", "--abbrev=0")
+	gitRoot, err := gitRootDir(dir)
+	if err != nil {
+		return "", err
+	}
+	prefix, err := moduleTagPrefix(gitRoot, dir)
+	if err != nil {
+		return "", err
+	}
+	cmd := exec.Command("git", "describe", "--tags", "--abbrev=0", "--match", prefix+"v[0-9]*")
 	cmd.Dir = dir
 	out, err := cmd.Output()
 	if err != nil {
 		return "", fmt.Errorf("failed to get version from git in %q: %v", dir, err)
 	}
 	tag := strings.TrimSpace(string(out))
-	return strings.TrimPrefix(tag, "v"), nil
+	version := strings.TrimPrefix(tag, prefix)
+	if !semver.IsValid(version) {
+		return "", fmt.Errorf("module tag %q is not a valid semantic version", tag)
+	}
+	return strings.TrimPrefix(version, "v"), nil
+}
+
+// gitRootDir returns the canonical top-level directory for the Git repository containing dir.
+func gitRootDir(dir string) (string, error) {
+	cmd := exec.Command("git", "rev-parse", "--show-toplevel")
+	cmd.Dir = dir
+	out, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("find git repository root from %q: %w", dir, err)
+	}
+	return filepath.Clean(strings.TrimSpace(string(out))), nil
+}
+
+// moduleTagPrefix returns the slash-separated tag prefix for moduleDir within gitRoot.
+func moduleTagPrefix(gitRoot, moduleDir string) (string, error) {
+	relative, err := filepath.Rel(gitRoot, moduleDir)
+	if err != nil {
+		return "", fmt.Errorf("resolve module directory relative to git root: %w", err)
+	}
+	if relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) || filepath.IsAbs(relative) {
+		return "", fmt.Errorf("Go module directory %q is outside Git root %q", moduleDir, gitRoot)
+	}
+	if relative == "." {
+		return "", nil
+	}
+	return filepath.ToSlash(relative) + "/", nil
+}
+
+// ModuleVersionTag returns the canonical Git tag for a module directory and semantic version.
+func ModuleVersionTag(gitRoot, moduleDir, version string) (string, error) {
+	prefix, err := moduleTagPrefix(gitRoot, moduleDir)
+	if err != nil {
+		return "", err
+	}
+	if !strings.HasPrefix(version, "v") {
+		version = "v" + version
+	}
+	return prefix + version, nil
 }
 
 // Run applies a semantic version bump and creates its local Git commit and tag.
@@ -346,7 +418,21 @@ func getVersionFromGitDir(dir string) (string, error) {
 // For a major bump to v2 or newer, Run updates the module path in go.mod and rewrites self-imports.
 // Run requires unrelated worktree changes to be absent and returns metadata for the files it updates.
 func Run(versionFilePath, versionArg string, extraFiles []string, bumpFiles []string, postBumpScript string) (VersionMeta, error) {
+	return runWithOptions(VersionOptions{VersionFile: versionFilePath, ExtraFiles: extraFiles, BumpFiles: bumpFiles, PostBumpScript: postBumpScript}, versionArg, false)
+}
+
+// RunWithOptions applies a semantic version bump using repository-confined paths relative to options.WorkDir.
+func RunWithOptions(options VersionOptions, versionArg string) (VersionMeta, error) {
+	return runWithOptions(options, versionArg, true)
+}
+
+// runWithOptions implements versioning with optional repository path confinement.
+func runWithOptions(options VersionOptions, versionArg string, confinePaths bool) (VersionMeta, error) {
 	var meta VersionMeta
+	workDir, gitRoot, versionFilePath, extraFiles, bumpFiles, postBumpScript, modDir, err := resolveVersionOptions(options, confinePaths)
+	if err != nil {
+		return meta, err
+	}
 
 	// 1. Ensure git is available
 	if err := checkGit(); err != nil {
@@ -354,7 +440,7 @@ func Run(versionFilePath, versionArg string, extraFiles []string, bumpFiles []st
 	}
 
 	// 2. Read the current version
-	currentVersionRaw, err := readCurrentVersion(versionFilePath)
+	currentVersionRaw, err := readCurrentVersionForModule(versionFilePath, modDir)
 	if err != nil {
 		return meta, err
 	}
@@ -373,7 +459,7 @@ func Run(versionFilePath, versionArg string, extraFiles []string, bumpFiles []st
 		meta.NewVersion = strings.TrimPrefix(bumped, "v")
 		meta.BumpType = versionArg
 	case "from-git":
-		fromGit, err := getVersionFromGitDir(filepath.Dir(versionFilePath))
+		fromGit, err := getVersionFromGitDir(modDir)
 		if err != nil {
 			return meta, err
 		}
@@ -401,27 +487,29 @@ func Run(versionFilePath, versionArg string, extraFiles []string, bumpFiles []st
 	copy(allowed, extraFiles)
 	allowed = append(allowed, versionFilePath)
 
-	// Detect module for major bumps
-	var modDir, oldModPath string
-	if meta.BumpType == "major" {
-		if root, err := locateGoModDir(filepath.Dir(versionFilePath)); err == nil {
-			modDir = root
-			// Read existing module path
-			data, err := os.ReadFile(filepath.Join(modDir, "go.mod"))
-			if err != nil {
-				return meta, fmt.Errorf("reading go.mod: %w", err)
-			}
-			f, err := modfile.Parse("go.mod", data, nil)
-			if err != nil {
-				return meta, fmt.Errorf("parsing go.mod: %w", err)
-			}
-			oldModPath = f.Module.Mod.Path
-			allowed = append(allowed, filepath.Join(modDir, "go.mod"))
+	meta.Tag, err = ModuleVersionTag(gitRoot, modDir, meta.NewVersion)
+	if err != nil {
+		return meta, err
+	}
+
+	// Detect module changes for major bumps.
+	var oldModPath string
+	hasGoMod := fileExists(filepath.Join(modDir, "go.mod"))
+	if meta.BumpType == "major" && hasGoMod {
+		data, err := os.ReadFile(filepath.Join(modDir, "go.mod"))
+		if err != nil {
+			return meta, fmt.Errorf("reading go.mod: %w", err)
 		}
+		f, err := modfile.Parse("go.mod", data, nil)
+		if err != nil {
+			return meta, fmt.Errorf("parsing go.mod: %w", err)
+		}
+		oldModPath = f.Module.Mod.Path
+		allowed = append(allowed, filepath.Join(modDir, "go.mod"))
 	}
 
 	// 5. Check for uncommitted files
-	if err := checkUncommittedFiles(allowed); err != nil {
+	if err := checkUncommittedFiles(workDir, allowed); err != nil {
 		return meta, err
 	}
 
@@ -432,7 +520,7 @@ func Run(versionFilePath, versionArg string, extraFiles []string, bumpFiles []st
 
 	// 6.5. Update go.mod if needed
 	var newModPath string
-	if meta.BumpType == "major" && modDir != "" {
+	if meta.BumpType == "major" && hasGoMod {
 		if err := updateGoMod(modDir, meta.NewVersion); err != nil {
 			return meta, err
 		}
@@ -470,7 +558,7 @@ func Run(versionFilePath, versionArg string, extraFiles []string, bumpFiles []st
 
 	// 6.8. Run post-bump script if provided
 	if postBumpScript != "" {
-		if err := runPostBumpScript(postBumpScript, meta.OldVersion, meta.NewVersion); err != nil {
+		if err := runPostBumpScript(workDir, postBumpScript, meta.OldVersion, meta.NewVersion); err != nil {
 			return meta, fmt.Errorf("post-bump script failed: %w", err)
 		}
 	}
@@ -479,18 +567,18 @@ func Run(versionFilePath, versionArg string, extraFiles []string, bumpFiles []st
 	filesToCommit := make([]string, len(extraFiles))
 	copy(filesToCommit, extraFiles)
 	filesToCommit = append(filesToCommit, versionFilePath)
-	if modDir != "" {
+	if meta.BumpType == "major" && hasGoMod {
 		filesToCommit = append(filesToCommit, filepath.Join(modDir, "go.mod"))
 	}
 	filesToCommit = append(filesToCommit, rewritten...)
 	filesToCommit = append(filesToCommit, bumpedFiles...)
-	if err := gitCommit(meta.NewVersion, filesToCommit); err != nil {
+	if err := gitCommit(workDir, meta.NewVersion, meta.Tag, filesToCommit); err != nil {
 		return meta, err
 	}
 
 	meta.UpdatedFiles = append([]string{versionFilePath}, rewritten...)
 	meta.UpdatedFiles = append(meta.UpdatedFiles, bumpedFiles...)
-	if modDir != "" {
+	if meta.BumpType == "major" && hasGoMod {
 		meta.UpdatedFiles = append([]string{filepath.Join(modDir, "go.mod")}, meta.UpdatedFiles...)
 	}
 
@@ -501,10 +589,24 @@ func Run(versionFilePath, versionArg string, extraFiles []string, bumpFiles []st
 //
 // It reports the resulting version and every file that Run would update, including versionFilePath, major-version module changes, rewritten self-imports, and bumpFiles.
 func DryRun(versionFilePath, versionArg string, bumpFiles []string) (VersionMeta, error) {
+	return dryRunWithOptions(VersionOptions{VersionFile: versionFilePath, BumpFiles: bumpFiles}, versionArg, false)
+}
+
+// DryRunWithOptions calculates a bump using repository-confined paths relative to options.WorkDir without changing Git state.
+func DryRunWithOptions(options VersionOptions, versionArg string) (VersionMeta, error) {
+	return dryRunWithOptions(options, versionArg, true)
+}
+
+// dryRunWithOptions implements dry-run versioning with optional repository path confinement.
+func dryRunWithOptions(options VersionOptions, versionArg string, confinePaths bool) (VersionMeta, error) {
 	var meta VersionMeta
+	_, gitRoot, versionFilePath, _, bumpFiles, _, modDir, err := resolveVersionOptions(options, confinePaths)
+	if err != nil {
+		return meta, err
+	}
 
 	// 1. Read current version
-	cur, err := readCurrentVersion(versionFilePath)
+	cur, err := readCurrentVersionForModule(versionFilePath, modDir)
 	if err != nil {
 		return meta, err
 	}
@@ -521,7 +623,7 @@ func DryRun(versionFilePath, versionArg string, bumpFiles []string) (VersionMeta
 		meta.NewVersion = strings.TrimPrefix(bumped, "v")
 		meta.BumpType = versionArg
 	case "from-git":
-		fromGit, err := getVersionFromGitDir(filepath.Dir(versionFilePath))
+		fromGit, err := getVersionFromGitDir(modDir)
 		if err != nil {
 			return meta, err
 		}
@@ -544,34 +646,37 @@ func DryRun(versionFilePath, versionArg string, bumpFiles []string) (VersionMeta
 		return meta, fmt.Errorf("new version (%s) is the same as the current version", meta.NewVersion)
 	}
 
+	meta.Tag, err = ModuleVersionTag(gitRoot, modDir, meta.NewVersion)
+	if err != nil {
+		return meta, err
+	}
+
 	// 4. Always include version.go
 	files := []string{versionFilePath}
 
 	// 5. For major bumps, also include go.mod and scan imports
-	if meta.BumpType == "major" {
-		if modDir, err := locateGoModDir(filepath.Dir(versionFilePath)); err == nil {
-			gomodPath := filepath.Join(modDir, "go.mod")
-			files = append(files, gomodPath)
+	if meta.BumpType == "major" && fileExists(filepath.Join(modDir, "go.mod")) {
+		gomodPath := filepath.Join(modDir, "go.mod")
+		files = append(files, gomodPath)
 
-			// Parse old module path
-			data, _ := os.ReadFile(gomodPath)
-			f, _ := modfile.Parse("go.mod", data, nil)
-			oldMod := f.Module.Mod.Path
+		// Parse old module path
+		data, _ := os.ReadFile(gomodPath)
+		f, _ := modfile.Parse("go.mod", data, nil)
+		oldMod := f.Module.Mod.Path
 
-			// Compute new module path
-			base, _, _ := module.SplitPathVersion(oldMod)
-			maj := semver.Major("v" + meta.NewVersion)
-			var newMod string
-			if maj == "v0" || maj == "v1" {
-				newMod = base
-			} else {
-				newMod = base + "/" + maj
-			}
+		// Compute new module path
+		base, _, _ := module.SplitPathVersion(oldMod)
+		maj := semver.Major("v" + meta.NewVersion)
+		var newMod string
+		if maj == "v0" || maj == "v1" {
+			newMod = base
+		} else {
+			newMod = base + "/" + maj
+		}
 
-			// Scan for all .go files needing import updates
-			if more, err := scanSelfImports(modDir, oldMod, newMod); err == nil {
-				files = append(files, more...)
-			}
+		// Scan for all .go files needing import updates
+		if more, err := scanSelfImports(modDir, oldMod, newMod); err == nil {
+			files = append(files, more...)
 		}
 	}
 
@@ -584,6 +689,135 @@ func DryRun(versionFilePath, versionArg string, bumpFiles []string) (VersionMeta
 
 	meta.UpdatedFiles = files
 	return meta, nil
+}
+
+// resolveVersionOptions resolves workdir-relative paths and rejects repository escapes.
+func resolveVersionOptions(options VersionOptions, confinePaths bool) (workDir, gitRoot, versionFile string, extraFiles, bumpFiles []string, postBumpScript, modDir string, err error) {
+	workDir = options.WorkDir
+	if workDir == "" {
+		workDir = "."
+	}
+	workDir, err = filepath.Abs(workDir)
+	if err != nil {
+		return "", "", "", nil, nil, "", "", fmt.Errorf("resolve work directory: %w", err)
+	}
+	info, err := os.Stat(workDir)
+	if err != nil {
+		return "", "", "", nil, nil, "", "", fmt.Errorf("stat work directory %q: %w", workDir, err)
+	}
+	if !info.IsDir() {
+		return "", "", "", nil, nil, "", "", fmt.Errorf("work directory %q is not a directory", workDir)
+	}
+	resolve := func(path string) string {
+		if path == "" || filepath.IsAbs(path) {
+			return path
+		}
+		return filepath.Join(workDir, path)
+	}
+	versionFile = options.VersionFile
+	if versionFile == "" {
+		versionFile = "./version.go"
+	}
+	versionFile = resolve(versionFile)
+	for _, path := range options.ExtraFiles {
+		extraFiles = append(extraFiles, resolve(path))
+	}
+	for _, path := range options.BumpFiles {
+		bumpFiles = append(bumpFiles, resolve(path))
+	}
+	postBumpScript = resolve(options.PostBumpScript)
+
+	canonicalVersionFile, err := canonicalPath(versionFile)
+	if err != nil {
+		return "", "", "", nil, nil, "", "", fmt.Errorf("resolve version file %q: %w", versionFile, err)
+	}
+	modDir, err = locateGoModDir(filepath.Dir(canonicalVersionFile))
+	hasGoMod := err == nil
+
+	if confinePaths {
+		gitRoot, err = gitRootDir(workDir)
+		if err != nil {
+			return "", "", "", nil, nil, "", "", err
+		}
+		paths := append([]string{versionFile}, extraFiles...)
+		paths = append(paths, bumpFiles...)
+		if postBumpScript != "" {
+			paths = append(paths, postBumpScript)
+		}
+		for _, path := range paths {
+			if err := validateRepositoryPath(gitRoot, path); err != nil {
+				return "", "", "", nil, nil, "", "", err
+			}
+		}
+	} else {
+		gitRoot, err = gitRootDir(filepath.Dir(canonicalVersionFile))
+		if err != nil {
+			gitRoot = filepath.Dir(canonicalVersionFile)
+		}
+	}
+	if !hasGoMod {
+		modDir = gitRoot
+	}
+	return workDir, gitRoot, versionFile, extraFiles, bumpFiles, postBumpScript, modDir, nil
+}
+
+// validateRepositoryPath rejects lexical and existing-symlink escapes from gitRoot.
+func validateRepositoryPath(gitRoot, path string) error {
+	canonical, err := canonicalPath(path)
+	if err != nil {
+		return fmt.Errorf("resolve path %q: %w", path, err)
+	}
+	inside, err := pathWithin(gitRoot, canonical)
+	if err != nil {
+		return err
+	}
+	if !inside {
+		return fmt.Errorf("path %q is outside Git repository %q", path, gitRoot)
+	}
+	return nil
+}
+
+// canonicalPath resolves symlinks in the deepest existing ancestor of path.
+func canonicalPath(path string) (string, error) {
+	absolute, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	current := filepath.Clean(absolute)
+	var suffix []string
+	for {
+		resolved, err := filepath.EvalSymlinks(current)
+		if err == nil {
+			for index := len(suffix) - 1; index >= 0; index-- {
+				resolved = filepath.Join(resolved, suffix[index])
+			}
+			return filepath.Clean(resolved), nil
+		}
+		if !os.IsNotExist(err) {
+			return "", err
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			return "", err
+		}
+		suffix = append(suffix, filepath.Base(current))
+		current = parent
+	}
+}
+
+// pathWithin reports whether path is at or below root.
+func pathWithin(root, path string) (bool, error) {
+	relative, err := filepath.Rel(root, path)
+	if err != nil {
+		return false, fmt.Errorf("resolve path relative to Git root: %w", err)
+	}
+	return relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator)) && !filepath.IsAbs(relative), nil
+}
+
+// fileExists reports whether path names an existing file.
+func fileExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && !info.IsDir()
 }
 
 // findAndReplaceSemver finds the first semantic version in a file and replaces it with newVersion.
@@ -664,13 +898,18 @@ func locateGoModDir(startDir string) (string, error) {
 }
 
 // checkUncommittedFiles prevents a release commit from including unrelated worktree changes.
-func checkUncommittedFiles(allowed []string) error {
+func checkUncommittedFiles(workDir string, allowed []string) error {
 	cmd := exec.Command("git", "status", "--porcelain")
+	cmd.Dir = workDir
 	out, err := cmd.Output()
 	if err != nil {
 		return fmt.Errorf("failed to check git status: %w", err)
 	}
 
+	gitRoot, err := gitRootDir(workDir)
+	if err != nil {
+		return err
+	}
 	allowedSet := make(map[string]struct{}, len(allowed))
 	for _, f := range allowed {
 		abs, err := filepath.Abs(f)
@@ -686,7 +925,7 @@ func checkUncommittedFiles(allowed []string) error {
 			continue
 		}
 		path := string(bytes.TrimSpace(line[3:]))
-		absPath, err := filepath.Abs(path)
+		absPath, err := filepath.Abs(filepath.Join(gitRoot, path))
 		if err != nil {
 			continue
 		}
@@ -794,7 +1033,7 @@ func updateSelfImports(modDir, oldMod, newMod string) ([]string, error) {
 }
 
 // runPostBumpScript executes the post-bump script with version information in environment variables.
-func runPostBumpScript(scriptPath, oldVersion, newVersion string) error {
+func runPostBumpScript(workDir, scriptPath, oldVersion, newVersion string) error {
 	// Check if script exists and is executable
 	info, err := os.Stat(scriptPath)
 	if err != nil {
@@ -808,6 +1047,7 @@ func runPostBumpScript(scriptPath, oldVersion, newVersion string) error {
 
 	// Prepare the command
 	cmd := exec.Command(scriptPath)
+	cmd.Dir = workDir
 
 	// Set environment variables
 	cmd.Env = append(os.Environ(),

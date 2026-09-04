@@ -198,7 +198,7 @@ func (runner execPublishCommandRunner) Sleep(duration time.Duration) error {
 
 // Publish publishes an existing version commit and tag as a Go module release.
 //
-// Publish validates the repository-root module, clean worktree, current branch,
+// Publish validates the selected module, clean worktree, current branch,
 // and local version tag before changing remote state. It pushes only incomplete
 // Git refs, creates or reuses a GitHub Release through gh, and seeds the
 // configured Go module proxy. Missing or unauthenticated gh support produces a
@@ -355,16 +355,9 @@ func publishProgress(output io.Writer, message string) {
 	}
 }
 
-// moduleVersionTag returns the release tag after rejecting unsupported nested modules.
+// moduleVersionTag returns the canonical release tag for root and nested modules.
 func moduleVersionTag(gitRoot, moduleDir, version string) (string, error) {
-	relative, err := filepath.Rel(gitRoot, moduleDir)
-	if err != nil {
-		return "", fmt.Errorf("resolve module directory relative to git root: %w", err)
-	}
-	if relative != "." {
-		return "", fmt.Errorf("publishing nested Go module %q is not supported; run goversion from a repository-root module", filepath.ToSlash(relative))
-	}
-	return version, nil
+	return ModuleVersionTag(gitRoot, moduleDir, version)
 }
 
 // findAndParseGoMod finds the nearest go.mod and validates its module path.
