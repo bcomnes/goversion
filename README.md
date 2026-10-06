@@ -290,7 +290,7 @@ The HTML directive is hidden when rendered; the Go comment appears in generated 
 
 ### Publishing
 
-Create a version, run the project validation you require, and publish the Go release:
+Create a version, test it, and publish:
 
 ```console
 goversion patch
@@ -298,45 +298,68 @@ go test ./...
 goversion publish
 ```
 
-`goversion publish` performs the following guarded steps:
-
-1. Reads the existing version from `version.go` and validates it against the module path in `go.mod`.
-2. Requires a module within the Git repository, a clean worktree, a current branch, and its matching canonical local tag at `HEAD`.
-3. Rejects an existing remote tag when it points to a different commit.
-4. Atomically publishes only incomplete branch or version-tag refs to the configured remote.
-5. Creates or reuses a GitHub Release with generated notes through the authenticated `gh` CLI.
-6. Seeds and verifies the complete module through `go mod download` using the configured Go proxy.
-7. With `-major-branch`, creates or advances the moving `vN` branch for GitHub Action consumers only after every earlier step succeeds.
-
-If `gh` is missing or unauthenticated, publishing continues without a GitHub Release and prints an actionable warning.
-A failure from an available and authenticated `gh` command remains fatal so a real release error is not silently ignored.
-Use `-no-release` to intentionally omit the GitHub Release or `-no-proxy` for a private module that should not reach the public proxy.
-The CLI prints each phase before starting it and streams useful stdout and stderr from external `git`, `gh`, and `go` commands as they run.
-Machine-readable proxy output is captured and displayed as curated JSON without temporary cache paths.
-Each external command has a two-minute timeout by default.
-Proxy seeding reports each attempt and retries recognized transient HTTP and network failures up to three times with short backoff.
-It disables checksum-database lookup for this isolated fetch so `sum.golang.org` availability cannot block verification of the configured module proxy.
-Permanent module and proxy-response failures are not retried.
-Use `-timeout` to change the per-command limit or a negative duration such as `-timeout=-1s` to disable it.
-Nested modules are supported by passing the same module directory to versioning and publishing. For example, `goversion -workdir tools/widget patch` creates `tools/widget/vX.Y.Z`, and `goversion publish -workdir tools/widget` validates and publishes that exact tag. Version discovery filters tags by this module-directory prefix, so tags belonging to other modules are ignored.
+Preview the release without changing remote state:
 
 ```console
 goversion publish -dry
-goversion publish -workdir tools/widget
-goversion publish -remote upstream
-goversion publish -proxy https://proxy.golang.org
-goversion publish -timeout 5m
-goversion publish -no-release
-goversion publish -no-proxy
-goversion publish -major-branch # publish vN (for example v2) after the release and proxy
 ```
 
-Publishing is resumable after a failure.
-Each branch, tag, GitHub Release, proxy, and moving major-branch step reports a `planned`, `completed`, `reused`, or `skipped` status.
-On retry, `goversion` skips Git refs that already point to the expected commit, reuses an existing GitHub Release, and continues with the first incomplete stage.
-The moving major branch is opt-in because it is intended for GitHub Actions referenced as `owner/action@vN`. It is derived from the validated semantic version and updated with a force-with-lease pinned to the remote value observed during preflight, preventing an unseen concurrent update from being overwritten.
-If proxy seeding was the failed stage, read-only Git and GitHub checks are repeated before retrying the proxy request.
-It reports a `pkg.go.dev` URL, but documentation indexing may complete asynchronously after the proxy accepts the module.
+Publishing requires a clean worktree, a current branch, and the version's canonical local tag at `HEAD`.
+The module must be inside the Git repository, and its `go.mod` path must match the version in `version.go`.
+A remote tag pointing to a different commit is rejected.
+
+Once validated, `goversion`:
+
+1. Atomically pushes branch and version-tag refs that are not already published.
+2. Creates or reuses a GitHub Release with generated notes through `gh`.
+3. Downloads and verifies the module through the Go proxy.
+
+#### Customize publishing
+
+| Option | Purpose |
+| --- | --- |
+| `-remote upstream` | Push to a different Git remote. |
+| `-proxy https://proxy.golang.org` | Select the Go module proxy. |
+| `-no-release` | Skip the GitHub Release. |
+| `-no-proxy` | Skip proxy access, for example for a private module. |
+| `-timeout 5m` | Change the two-minute per-command timeout; `-timeout=-1s` disables it. |
+| `-major-branch` | Update a moving `vN` branch for GitHub Action consumers after publishing succeeds. |
+
+If `gh` is missing or unauthenticated, publishing continues with a warning and no GitHub Release.
+Errors from an available, authenticated `gh` remain fatal.
+
+#### Publish a nested module
+
+Use the same module directory for versioning and publishing:
+
+```console
+goversion -workdir tools/widget patch
+goversion publish -workdir tools/widget
+```
+
+The module uses tags such as `tools/widget/v2.0.1`.
+Tags belonging to other modules are ignored; each invocation versions or publishes only the selected module.
+
+#### Retry a failed publish
+
+Run `goversion publish` again after fixing the failure.
+It rechecks Git and GitHub state, skips refs already pointing to the expected commit, and reuses an existing GitHub Release.
+Each stage reports `planned`, `completed`, `reused`, or `skipped`, with command output streamed as it runs.
+
+Proxy seeding retries recognized transient HTTP and network failures up to three times with short backoff; permanent failures are not retried.
+The isolated download disables checksum-database lookup so `sum.golang.org` availability cannot block proxy verification.
+The reported `pkg.go.dev` URL may become available later, since documentation indexing is asynchronous.
+
+#### Publish a moving major branch
+
+For GitHub Actions consumed as `owner/action@v2`:
+
+```console
+goversion publish -major-branch
+```
+
+The `vN` branch is derived from the release version and updated only after the release and proxy steps succeed.
+A force-with-lease pinned to the remote value observed during preflight protects against overwriting concurrent updates.
 
 ### Library Usage
 
