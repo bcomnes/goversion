@@ -252,8 +252,10 @@ References pinned to a version such as `@v1.2.3`, references to another major ve
 `@latest` follows the new module path.
 Go runtime string literals are not rewritten; actual import declarations are handled by the self-import pass.
 
-The documentation scan stays within the selected module and skips nested modules, `vendor`, `.git`, symlinks, and Git-ignored untracked files.
-Tracked documentation remains eligible even when it matches an ignore rule.
+Import and documentation scans use Git's tracked and nonignored file lists, pruning directories with no eligible files before descending into them.
+This avoids walking ignored dependency and build trees such as `node_modules`, while retaining tracked files and ignore-rule exceptions inside otherwise ignored directories.
+`node_modules` is not excluded by name: files there remain eligible if tracked or not ignored.
+Scans stay within the selected module and always skip nested modules, `vendor`, `.git`, and symlinks.
 Changed documentation is included in the version commit automatically; no `-file` flag is needed.
 Use `goversion -dry major` to preview the affected files without changing them.
 These updates follow the `major` directive's module-path migration; explicit versions and `premajor` do not currently migrate module paths.

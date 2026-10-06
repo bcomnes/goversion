@@ -1003,20 +1003,14 @@ func checkUncommittedFiles(workDir string, allowed []string) error {
 	return nil
 }
 
-// scanSelfImports returns the list of .go files under modDir
-// whose imports would be rewritten from oldMod → newMod.
+// scanSelfImports returns eligible .go files owned by modDir whose imports
+// would be rewritten from oldMod to newMod, using the shared Git-aware scan.
 func scanSelfImports(modDir, oldMod, newMod string) ([]string, error) {
 	if oldMod == newMod {
 		return nil, nil
 	}
 	var matches []string
-	err := filepath.WalkDir(modDir, func(path string, d fs.DirEntry, err error) error {
-		if err != nil || d.IsDir() {
-			if d != nil && d.IsDir() && d.Name() == "vendor" {
-				return filepath.SkipDir
-			}
-			return nil
-		}
+	err := walkModuleFiles(modDir, func(path string, _ fs.DirEntry) error {
 		if !strings.HasSuffix(path, ".go") {
 			return nil
 		}
@@ -1039,24 +1033,15 @@ func scanSelfImports(modDir, oldMod, newMod string) ([]string, error) {
 	return matches, err
 }
 
-// updateSelfImports walks all .go files under modDir, updating imports from oldMod to newMod.
+// updateSelfImports updates imports from oldMod to newMod in eligible .go files
+// owned by modDir, pruning Git-ignored trees and other modules.
 // Returns the list of files modified.
 func updateSelfImports(modDir, oldMod, newMod string) ([]string, error) {
 	if oldMod == newMod {
 		return nil, nil
 	}
 	var modified []string
-	err := filepath.WalkDir(modDir, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		// Skip vendor directories
-		if d.IsDir() {
-			if d.Name() == "vendor" {
-				return filepath.SkipDir
-			}
-			return nil
-		}
+	err := walkModuleFiles(modDir, func(path string, _ fs.DirEntry) error {
 		// Only consider .go files
 		if !strings.HasSuffix(path, ".go") {
 			return nil

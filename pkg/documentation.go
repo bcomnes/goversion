@@ -6,7 +6,7 @@ import (
 	"go/token"
 	"io/fs"
 	"os"
-	"os/exec"
+
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -151,24 +151,8 @@ func updateDocumentationReferences(modDir, oldMod, newMod string, dryRun bool) (
 	if oldMod == newMod || oldMod == "" {
 		return nil, nil
 	}
-	ignored, err := ignoredDocumentationFiles(modDir)
-	if err != nil {
-		return nil, err
-	}
 	var changed []string
-	err = filepath.WalkDir(modDir, func(filename string, entry fs.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
-		if entry.IsDir() {
-			if filename != modDir && (entry.Name() == ".git" || entry.Name() == "vendor" || fileExists(filepath.Join(filename, "go.mod"))) {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if !entry.Type().IsRegular() || ignored[filename] {
-			return nil
-		}
+	err := walkModuleFiles(modDir, func(filename string, entry fs.DirEntry) error {
 		ext := strings.ToLower(filepath.Ext(filename))
 		if ext != ".md" && ext != ".markdown" && ext != ".go" {
 			return nil
@@ -202,28 +186,6 @@ func updateDocumentationReferences(modDir, oldMod, newMod string, dryRun bool) (
 		return nil
 	})
 	return changed, err
-}
-
-// ignoredDocumentationFiles excludes untracked build output without excluding
-// tracked documentation that happens to match an ignore rule. Standalone scans
-// outside a Git repository (e.g. unit-test fixtures) have no Git ignore policy.
-func ignoredDocumentationFiles(modDir string) (map[string]bool, error) {
-	ignored := make(map[string]bool)
-	if _, err := gitRootDir(modDir); err != nil {
-		return ignored, nil
-	}
-	cmd := exec.Command("git", "ls-files", "--others", "--ignored", "--exclude-standard", "-z")
-	cmd.Dir = modDir
-	out, err := cmd.Output()
-	if err != nil {
-		return nil, fmt.Errorf("list ignored documentation: %w", err)
-	}
-	for _, name := range strings.Split(string(out), "\x00") {
-		if name != "" {
-			ignored[filepath.Join(modDir, filepath.FromSlash(name))] = true
-		}
-	}
-	return ignored, nil
 }
 
 // uniquePaths removes duplicate file entries without changing discovery order.
