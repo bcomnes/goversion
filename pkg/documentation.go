@@ -22,7 +22,7 @@ const documentationIgnoreNextLine = "goversion:ignore-next-line"
 
 // rewriteDocumentationText updates Markdown references, honoring a standalone
 // HTML ignore-next-line comment. Blank lines consume the directive too.
-func rewriteDocumentationText(text, oldMod, newMod string) string {
+func rewriteDocumentationText(text, oldMod, newMod string, excludedModules ...string) string {
 	var result strings.Builder
 	ignore := false
 	for _, line := range strings.SplitAfter(text, "\n") {
@@ -30,7 +30,7 @@ func rewriteDocumentationText(text, oldMod, newMod string) string {
 		if ignore || directive {
 			result.WriteString(line)
 		} else {
-			result.WriteString(rewriteDocumentationLine(line, oldMod, newMod))
+			result.WriteString(rewriteDocumentationLine(line, oldMod, newMod, excludedModules...))
 		}
 		ignore = directive
 	}
@@ -40,7 +40,7 @@ func rewriteDocumentationText(text, oldMod, newMod string) string {
 // rewriteDocumentationLine updates self module/package references while preserving
 // unrelated URLs and explicit version pins. The moving @latest selector follows
 // the new module path, unlike a pinned release such as @v1.2.3.
-func rewriteDocumentationLine(text, oldMod, newMod string) string {
+func rewriteDocumentationLine(text, oldMod, newMod string, excludedModules ...string) string {
 	if oldMod == "" || oldMod == newMod {
 		return text
 	}
@@ -61,6 +61,13 @@ func rewriteDocumentationLine(text, oldMod, newMod string) string {
 		path, suffix := target, ""
 		if i := strings.IndexAny(path, "?#"); i >= 0 {
 			path, suffix = target[:i], target[i:]
+		}
+		modulePath := strings.SplitN(path, "@", 2)[0]
+		if badge {
+			modulePath = strings.TrimSuffix(modulePath, ".svg")
+		}
+		if excludedModuleReference(modulePath, excludedModules) {
+			return reference
 		}
 		if !strings.HasPrefix(path, oldMod) {
 			return reference
@@ -94,7 +101,7 @@ func rewriteDocumentationLine(text, oldMod, newMod string) string {
 
 // rewriteGoDocumentation edits comment byte ranges only, leaving literals and
 // executable code untouched. Work backwards so earlier offsets remain valid.
-func rewriteGoDocumentation(filename string, data []byte, oldMod, newMod string) ([]byte, error) {
+func rewriteGoDocumentation(filename string, data []byte, oldMod, newMod string, excludedModules ...string) ([]byte, error) {
 	fset := token.NewFileSet()
 	file, err := parser.ParseFile(fset, filename, data, parser.ParseComments)
 	if err != nil {
@@ -135,7 +142,7 @@ func rewriteGoDocumentation(filename string, data []byte, oldMod, newMod string)
 			var updated strings.Builder
 			for n, line := range strings.SplitAfter(string(data[bodyStart:bodyEnd]), "\n") {
 				if !ignoredLines[position.Line+n] {
-					line = rewriteDocumentationLine(line, oldMod, newMod)
+					line = rewriteDocumentationLine(line, oldMod, newMod, excludedModules...)
 				}
 				updated.WriteString(line)
 			}
@@ -151,8 +158,12 @@ func updateDocumentationReferences(modDir, oldMod, newMod string, dryRun bool) (
 	if oldMod == newMod || oldMod == "" {
 		return nil, nil
 	}
+	excludedModules, err := nestedModulePaths(modDir)
+	if err != nil {
+		return nil, err
+	}
 	var changed []string
-	err := walkModuleFiles(modDir, func(filename string, entry fs.DirEntry) error {
+	err = walkModuleFiles(modDir, func(filename string, entry fs.DirEntry) error {
 		ext := strings.ToLower(filepath.Ext(filename))
 		if ext != ".md" && ext != ".markdown" && ext != ".go" {
 			return nil
@@ -163,9 +174,9 @@ func updateDocumentationReferences(modDir, oldMod, newMod string, dryRun bool) (
 		}
 		var updated []byte
 		if ext == ".go" {
-			updated, err = rewriteGoDocumentation(filename, data, oldMod, newMod)
+			updated, err = rewriteGoDocumentation(filename, data, oldMod, newMod, excludedModules...)
 		} else {
-			updated = []byte(rewriteDocumentationText(string(data), oldMod, newMod))
+			updated = []byte(rewriteDocumentationText(string(data), oldMod, newMod, excludedModules...))
 		}
 		if err != nil {
 			return fmt.Errorf("rewrite documentation in %s: %w", filename, err)

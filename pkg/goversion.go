@@ -1009,8 +1009,12 @@ func scanSelfImports(modDir, oldMod, newMod string) ([]string, error) {
 	if oldMod == newMod {
 		return nil, nil
 	}
+	excludedModules, err := nestedModulePaths(modDir)
+	if err != nil {
+		return nil, err
+	}
 	var matches []string
-	err := walkModuleFiles(modDir, func(path string, _ fs.DirEntry) error {
+	err = walkModuleFiles(modDir, func(path string, _ fs.DirEntry) error {
 		if !strings.HasSuffix(path, ".go") {
 			return nil
 		}
@@ -1023,7 +1027,7 @@ func scanSelfImports(modDir, oldMod, newMod string) ([]string, error) {
 		}
 		for _, imp := range f.Imports {
 			p, _ := strconv.Unquote(imp.Path.Value)
-			if strings.HasPrefix(p, oldMod) {
+			if matchesModulePath(p, oldMod) && !excludedModuleReference(p, excludedModules) {
 				matches = append(matches, path)
 				break
 			}
@@ -1040,8 +1044,12 @@ func updateSelfImports(modDir, oldMod, newMod string) ([]string, error) {
 	if oldMod == newMod {
 		return nil, nil
 	}
+	excludedModules, err := nestedModulePaths(modDir)
+	if err != nil {
+		return nil, err
+	}
 	var modified []string
-	err := walkModuleFiles(modDir, func(path string, _ fs.DirEntry) error {
+	err = walkModuleFiles(modDir, func(path string, _ fs.DirEntry) error {
 		// Only consider .go files
 		if !strings.HasSuffix(path, ".go") {
 			return nil
@@ -1059,7 +1067,7 @@ func updateSelfImports(modDir, oldMod, newMod string) ([]string, error) {
 			if err != nil {
 				continue
 			}
-			if strings.HasPrefix(p, oldMod) {
+			if matchesModulePath(p, oldMod) && !excludedModuleReference(p, excludedModules) {
 				newPath := strings.Replace(p, oldMod, newMod, 1)
 				imp.Path.Value = strconv.Quote(newPath)
 				changed = true

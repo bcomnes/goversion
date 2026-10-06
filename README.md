@@ -249,6 +249,7 @@ When `goversion major` changes the module path, it also updates self-references 
 Existing major suffixes are replaced, so a v2-to-v3 bump changes `/v2` to `/v3` rather than appending another suffix.
 Anchors and query parameters are preserved.
 References pinned to a version such as `@v1.2.3`, references to another major version or module, and repository URLs are left unchanged.
+Nested modules are identified by their own `go.mod` declarations, so references to their module paths in parent documentation and imports remain unchanged too.
 `@latest` follows the new module path.
 Go runtime string literals are not rewritten; actual import declarations are handled by the self-import pass.
 
