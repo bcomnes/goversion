@@ -47,6 +47,10 @@ type VersionOptions struct {
 	BumpFiles []string
 	// PostBumpScript runs after updates and before commit. A relative path is resolved within WorkDir.
 	PostBumpScript string
+	// SkipDocs disables automatic documentation reference rewriting during major
+	// module-path migrations. It also omits those changes from dry-run reporting.
+	// Module paths, self-imports, BumpFiles, and PostBumpScript are unaffected.
+	SkipDocs bool
 }
 
 // normalizeVersion ensures the version string starts with a "v" if it's not "dev".
@@ -464,7 +468,8 @@ func Run(versionFilePath, versionArg string, extraFiles []string, bumpFiles []st
 	return runWithOptions(VersionOptions{VersionFile: versionFilePath, ExtraFiles: extraFiles, BumpFiles: bumpFiles, PostBumpScript: postBumpScript}, versionArg, false)
 }
 
-// RunWithOptions applies a semantic version bump using repository-confined paths relative to options.WorkDir.
+// RunWithOptions bumps a version using repository-confined paths relative to options.WorkDir.
+// Set options.SkipDocs to leave automatic documentation references unchanged.
 func RunWithOptions(options VersionOptions, versionArg string) (VersionMeta, error) {
 	return runWithOptions(options, versionArg, true)
 }
@@ -586,11 +591,13 @@ func runWithOptions(options VersionOptions, versionArg string, confinePaths bool
 		if err != nil {
 			return meta, err
 		}
-		docs, err := updateDocumentationReferences(modDir, oldModPath, newModPath, false)
-		if err != nil {
-			return meta, err
+		if !options.SkipDocs {
+			docs, err := updateDocumentationReferences(modDir, oldModPath, newModPath, false)
+			if err != nil {
+				return meta, err
+			}
+			rewritten = uniquePaths(append(rewritten, docs...))
 		}
-		rewritten = uniquePaths(append(rewritten, docs...))
 	}
 
 	// 6.7. Process bump files
@@ -643,6 +650,7 @@ func DryRun(versionFilePath, versionArg string, bumpFiles []string) (VersionMeta
 }
 
 // DryRunWithOptions calculates a bump using repository-confined paths relative to options.WorkDir without changing Git state.
+// It honors options.SkipDocs when reporting files that would be updated.
 func DryRunWithOptions(options VersionOptions, versionArg string) (VersionMeta, error) {
 	return dryRunWithOptions(options, versionArg, true)
 }
@@ -736,11 +744,13 @@ func dryRunWithOptions(options VersionOptions, versionArg string, confinePaths b
 			return meta, err
 		}
 		files = append(files, more...)
-		docs, err := updateDocumentationReferences(modDir, oldMod, newMod, true)
-		if err != nil {
-			return meta, err
+		if !options.SkipDocs {
+			docs, err := updateDocumentationReferences(modDir, oldMod, newMod, true)
+			if err != nil {
+				return meta, err
+			}
+			files = append(files, docs...)
 		}
-		files = append(files, docs...)
 	}
 
 	// 6. Check bump files

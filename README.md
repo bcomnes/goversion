@@ -140,6 +140,8 @@ go tool github.com/bcomnes/goversion/v2 publish [flags]
 - `-file`: Additional file to include in the commit. This flag can be used multiple times.
 - `-bump-file`: Additional Go project metadata file to scan for the first semantic version and bump. This flag can be used multiple times. Only valid semver strings are matched (no "v" prefix).
 - `-post-bump`: Script to execute after version bump but before git commit. Receives `GOVERSION_OLD_VERSION` and `GOVERSION_NEW_VERSION` environment variables. Files created or modified by the script must be specified with `-file` to be included in the commit.
+- `-skip-docs`: Skip automatic documentation path updates during major bumps, including dry runs.
+  Module paths, self-imports, explicit bump files, and post-bump hooks are unaffected.
 - `-version`: Show the version of the `goversion` CLI tool and exit.
 - `-help`: Show usage instructions.
 
@@ -260,6 +262,24 @@ Scans stay within the selected module and always skip nested modules, `vendor`, 
 Changed documentation is included in the version commit automatically; no `-file` flag is needed.
 Use `goversion -dry major` to preview the affected files without changing them.
 These updates follow the `major` directive's module-path migration; explicit versions and `premajor` do not currently migrate module paths.
+
+To disable automatic documentation rewriting for an entire bump:
+
+```console
+goversion -skip-docs major
+goversion -skip-docs -dry major
+```
+
+This still updates the version, `go.mod`, and actual self-imports.
+Explicit `-bump-file` changes and post-bump hooks remain enabled, even when they modify documentation.
+Library callers can set `VersionOptions.SkipDocs` with `RunWithOptions` or `DryRunWithOptions`:
+
+```go
+meta, err := goversion.RunWithOptions(goversion.VersionOptions{
+    WorkDir:  ".",
+    SkipDocs: true,
+}, "major")
+```
 
 #### Keep a reference on its current major version
 

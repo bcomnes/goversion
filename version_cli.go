@@ -35,6 +35,7 @@ func runVersionCommand(arguments []string, output, errorOutput io.Writer) int {
 	flags.Var(&bumpFiles, "bump-file", "Additional file to scan for first semver and bump it. May be repeated.")
 	postBump := flags.String("post-bump", "", "Script to execute after version bump but before git commit. Receives GOVERSION_OLD_VERSION and GOVERSION_NEW_VERSION env vars.")
 	dryRun := flags.Bool("dry", false, "Perform a dry run without modifying any files or git repository")
+	skipDocs := flags.Bool("skip-docs", false, "Skip automatic documentation path updates; module paths, self-imports, bump files, and hooks are unaffected")
 	showVersion := flags.Bool("version", false, "Show CLI version and exit")
 	help := flags.Bool("help", false, "Show help message and exit")
 	flags.Usage = func() { printVersionUsage(flags.Output(), flags) }
@@ -79,6 +80,7 @@ func runVersionCommand(arguments []string, output, errorOutput io.Writer) int {
 		ExtraFiles:     extraFiles,
 		BumpFiles:      bumpFiles,
 		PostBumpScript: *postBump,
+		SkipDocs:       *skipDocs,
 	}
 	if *dryRun {
 		meta, err = goversion.DryRunWithOptions(options, flags.Arg(0))
@@ -118,10 +120,12 @@ func printVersionUsage(output io.Writer, flags *flag.FlagSet) {
   goversion [options] <version-bump>
 
 Bumps the version in a Go source file (default: ./version.go), commits the change with the version string (no "v" prefix),
-and tags the commit with the version prefixed with "v". For major version bumps >= v2, go.mod and all self references are also updated.
+and tags the commit with the version prefixed with "v". For major version bumps >= v2, go.mod and self-imports are also updated.
+Documentation references are updated unless -skip-docs is set.
 
 Examples:
   goversion minor
+  goversion -skip-docs major
   goversion 1.2.3
   goversion -workdir tools/widget patch
   goversion -bump-file docs/version.txt patch
