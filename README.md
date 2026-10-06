@@ -38,7 +38,7 @@ goversion publish # publish Git refs and a GitHub Release, then seed the Go prox
 - **Go Module Publishing:** Validates a release, atomically publishes only incomplete Git refs, creates or reuses a GitHub Release through `gh`, and seeds the Go module proxy.
 - **CLI and Library:** Offers both a command-line interface for quick version updates and a library for integrating version management into your applications.
 - **Flexible Configuration:** Specify the path to your version file and include additional files for Git staging.
-- **Module Path Updates:** Updates `go.mod` and package self-imports for major versions that require a `/vN` suffix.
+- **Module Path Updates:** Updates `go.mod`, package self-imports, and documentation references for major versions that require a `/vN` suffix.
 - **Supplemental File Bumping:** Bump a semantic version in additional Go project metadata files by finding and replacing the first semantic version.
 - **Post-bump Hooks:** Run custom scripts after version bumping but before committing, with access to old and new version via environment variables.
 
@@ -56,7 +56,7 @@ flowchart TD
     C --> D[Resolve the next semantic version]
     D --> E[Validate allowed worktree changes]
     E --> F{Major bump to v2 or newer?}
-    F -- Yes --> G[Update go.mod and rewrite self-imports]
+    F -- Yes --> G[Update module paths, self-imports, and documentation]
     F -- No --> H[Update version and supplemental files]
     G --> H
     H --> I{Post-bump hook configured?}
@@ -230,9 +230,55 @@ This command will:
 - Stage the updated version file (plus any `-file` flags).
 - Commit with the new version as the commit message (no `v` prefix).
 - Tag the commit with the canonical module tag: `vX.Y.Z` for a root module or `<module-dir>/vX.Y.Z` for a nested module.
-- For major version bumps ≥ v2, update go.mod module path and rewrite self-imports.
+- For major version bumps ≥ v2, update the `go.mod` module path, self-imports, and documentation references.
 
 > **Note**: The working directory must be clean (no unstaged/uncommitted changes outside the listed files) or the command will fail to prevent accidental commits.
+
+### Major-version documentation updates
+
+When `goversion major` changes the module path, it also updates self-references in Markdown files (`.md` and `.markdown`) and Go comments:
+
+| Before | After a v2 major bump |
+| --- | --- |
+| `https://pkg.go.dev/example.com/widget#Client` | `https://pkg.go.dev/example.com/widget/v2#Client` |
+| `https://pkg.go.dev/badge/example.com/widget.svg` | `https://pkg.go.dev/badge/example.com/widget/v2.svg` |
+| `https://godoc.org/example.com/widget/client` | `https://godoc.org/example.com/widget/v2/client` |
+| `import "example.com/widget/client"` in an example | `import "example.com/widget/v2/client"` |
+| `go get example.com/widget@latest` | `go get example.com/widget/v2@latest` |
+
+Existing major suffixes are replaced, so a v2-to-v3 bump changes `/v2` to `/v3` rather than appending another suffix.
+Anchors and query parameters are preserved.
+References pinned to a version such as `@v1.2.3`, references to another major version or module, and repository URLs are left unchanged.
+`@latest` follows the new module path.
+Go runtime string literals are not rewritten; actual import declarations are handled by the self-import pass.
+
+The documentation scan stays within the selected module and skips nested modules, `vendor`, `.git`, symlinks, and Git-ignored untracked files.
+Tracked documentation remains eligible even when it matches an ignore rule.
+Changed documentation is included in the version commit automatically; no `-file` flag is needed.
+Use `goversion -dry major` to preview the affected files without changing them.
+These updates follow the `major` directive's module-path migration; explicit versions and `premajor` do not currently migrate module paths.
+
+#### Keep a reference on its current major version
+
+Place `goversion:ignore-next-line` above a reference that should not follow the module's major bump:
+
+```markdown
+<!-- goversion:ignore-next-line -->
+See the [v2 API](https://pkg.go.dev/example.com/widget/v2#Client).
+```
+
+In Go documentation, use a standalone line comment:
+
+```go
+// goversion:ignore-next-line
+// Previous API: https://pkg.go.dev/example.com/widget/v2#Client
+```
+
+The directive preserves all documentation references on the next physical line, including whitespace and line endings.
+A blank line consumes it; it does not skip ahead to the next reference.
+It applies only to documentation rewriting, not actual Go import declarations or `go.mod`.
+Dry runs honor it too and omit files whose only references are protected.
+The HTML directive is hidden in rendered Markdown; the Go comment is visible in generated documentation.
 
 ### Publishing
 

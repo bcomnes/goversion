@@ -309,17 +309,58 @@ func readCurrentVersionForModule(path, moduleDir string) (string, error) {
 // commits with a message equal to the new version (without the "v" prefix),
 // and then tags the commit with the same version prefixed by "v".
 func gitCommit(workDir, newVersion, tag string, extraFiles []string) error {
-	// Ensure that the version file is included.
-	files := extraFiles
-
-	// Stage files.
-	addArgs := append([]string{"add"}, files...)
-	addCmd := exec.Command("git", addArgs...)
-	addCmd.Dir = workDir
+	// Updating tracked files separately handles documentation in ignored
+	// directories without force-adding any ignored, untracked build output.
+	root, err := gitRootDir(workDir)
+	if err != nil {
+		return err
+	}
+	list := exec.Command("git", "ls-files", "--cached", "--full-name", "-z")
+	list.Dir = workDir
+	out, err := list.Output()
+	if err != nil {
+		return fmt.Errorf("list tracked files: %w", err)
+	}
+	tracked := make(map[string]bool)
+	for _, name := range strings.Split(string(out), "\x00") {
+		if name != "" {
+			tracked[filepath.Join(root, filepath.FromSlash(name))] = true
+		}
+	}
+	var updates, additions []string
+	for _, file := range extraFiles {
+		absolute := file
+		if !filepath.IsAbs(absolute) {
+			absolute = filepath.Join(workDir, absolute)
+		}
+		absolute, err = filepath.Abs(absolute)
+		if err != nil {
+			return err
+		}
+		if tracked[absolute] {
+			updates = append(updates, file)
+		} else {
+			additions = append(additions, file)
+		}
+	}
 	var stderr bytes.Buffer
-	addCmd.Stderr = &stderr
-	if err := addCmd.Run(); err != nil {
-		return fmt.Errorf("git add failed: %v, detail: %s", err, stderr.String())
+	for i, files := range [][]string{updates, additions} {
+		if len(files) == 0 {
+			continue
+		}
+		args := []string{"add"}
+		if i == 0 {
+			args = append(args, "--update")
+		}
+		args = append(args, "--")
+		args = append(args, files...)
+		addCmd := exec.Command("git", args...)
+		addCmd.Dir = workDir
+		stderr.Reset()
+		addCmd.Stderr = &stderr
+		if err := addCmd.Run(); err != nil {
+			return fmt.Errorf("git add failed: %v, detail: %s", err, stderr.String())
+		}
 	}
 
 	// Commit changes.
@@ -416,6 +457,8 @@ func ModuleVersionTag(gitRoot, moduleDir, version string) (string, error) {
 // postBumpScript runs after file updates and before the commit with GOVERSION_OLD_VERSION and GOVERSION_NEW_VERSION in its environment.
 //
 // For a major bump to v2 or newer, Run updates the module path in go.mod and rewrites self-imports.
+// It also updates unpinned self-references in Markdown files and Go comments,
+// including documentation URLs, badges, and example imports.
 // Run requires unrelated worktree changes to be absent and returns metadata for the files it updates.
 func Run(versionFilePath, versionArg string, extraFiles []string, bumpFiles []string, postBumpScript string) (VersionMeta, error) {
 	return runWithOptions(VersionOptions{VersionFile: versionFilePath, ExtraFiles: extraFiles, BumpFiles: bumpFiles, PostBumpScript: postBumpScript}, versionArg, false)
@@ -543,6 +586,11 @@ func runWithOptions(options VersionOptions, versionArg string, confinePaths bool
 		if err != nil {
 			return meta, err
 		}
+		docs, err := updateDocumentationReferences(modDir, oldModPath, newModPath, false)
+		if err != nil {
+			return meta, err
+		}
+		rewritten = uniquePaths(append(rewritten, docs...))
 	}
 
 	// 6.7. Process bump files
@@ -572,7 +620,7 @@ func runWithOptions(options VersionOptions, versionArg string, confinePaths bool
 	}
 	filesToCommit = append(filesToCommit, rewritten...)
 	filesToCommit = append(filesToCommit, bumpedFiles...)
-	if err := gitCommit(workDir, meta.NewVersion, meta.Tag, filesToCommit); err != nil {
+	if err := gitCommit(workDir, meta.NewVersion, meta.Tag, uniquePaths(filesToCommit)); err != nil {
 		return meta, err
 	}
 
@@ -581,13 +629,15 @@ func runWithOptions(options VersionOptions, versionArg string, confinePaths bool
 	if meta.BumpType == "major" && hasGoMod {
 		meta.UpdatedFiles = append([]string{filepath.Join(modDir, "go.mod")}, meta.UpdatedFiles...)
 	}
+	meta.UpdatedFiles = uniquePaths(meta.UpdatedFiles)
 
 	return meta, nil
 }
 
 // DryRun calculates a version bump without changing files or Git state.
 //
-// It reports the resulting version and every file that Run would update, including versionFilePath, major-version module changes, rewritten self-imports, and bumpFiles.
+// It reports the resulting version and every file that Run would update, including versionFilePath,
+// major-version module changes, rewritten self-imports and documentation references, and bumpFiles.
 func DryRun(versionFilePath, versionArg string, bumpFiles []string) (VersionMeta, error) {
 	return dryRunWithOptions(VersionOptions{VersionFile: versionFilePath, BumpFiles: bumpFiles}, versionArg, false)
 }
@@ -660,8 +710,14 @@ func dryRunWithOptions(options VersionOptions, versionArg string, confinePaths b
 		files = append(files, gomodPath)
 
 		// Parse old module path
-		data, _ := os.ReadFile(gomodPath)
-		f, _ := modfile.Parse("go.mod", data, nil)
+		data, err := os.ReadFile(gomodPath)
+		if err != nil {
+			return meta, err
+		}
+		f, err := modfile.Parse("go.mod", data, nil)
+		if err != nil {
+			return meta, err
+		}
 		oldMod := f.Module.Mod.Path
 
 		// Compute new module path
@@ -675,9 +731,16 @@ func dryRunWithOptions(options VersionOptions, versionArg string, confinePaths b
 		}
 
 		// Scan for all .go files needing import updates
-		if more, err := scanSelfImports(modDir, oldMod, newMod); err == nil {
-			files = append(files, more...)
+		more, err := scanSelfImports(modDir, oldMod, newMod)
+		if err != nil {
+			return meta, err
 		}
+		files = append(files, more...)
+		docs, err := updateDocumentationReferences(modDir, oldMod, newMod, true)
+		if err != nil {
+			return meta, err
+		}
+		files = append(files, docs...)
 	}
 
 	// 6. Check bump files
@@ -687,7 +750,7 @@ func dryRunWithOptions(options VersionOptions, versionArg string, confinePaths b
 		}
 	}
 
-	meta.UpdatedFiles = files
+	meta.UpdatedFiles = uniquePaths(files)
 	return meta, nil
 }
 
@@ -943,6 +1006,9 @@ func checkUncommittedFiles(workDir string, allowed []string) error {
 // scanSelfImports returns the list of .go files under modDir
 // whose imports would be rewritten from oldMod → newMod.
 func scanSelfImports(modDir, oldMod, newMod string) ([]string, error) {
+	if oldMod == newMod {
+		return nil, nil
+	}
 	var matches []string
 	err := filepath.WalkDir(modDir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
@@ -951,7 +1017,7 @@ func scanSelfImports(modDir, oldMod, newMod string) ([]string, error) {
 			}
 			return nil
 		}
-		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+		if !strings.HasSuffix(path, ".go") {
 			return nil
 		}
 
@@ -976,6 +1042,9 @@ func scanSelfImports(modDir, oldMod, newMod string) ([]string, error) {
 // updateSelfImports walks all .go files under modDir, updating imports from oldMod to newMod.
 // Returns the list of files modified.
 func updateSelfImports(modDir, oldMod, newMod string) ([]string, error) {
+	if oldMod == newMod {
+		return nil, nil
+	}
 	var modified []string
 	err := filepath.WalkDir(modDir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
