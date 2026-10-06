@@ -238,7 +238,7 @@ This command will:
 
 ### Major-version documentation updates
 
-When `goversion major` changes the module path, it also updates self-references in Markdown files (`.md` and `.markdown`) and Go comments:
+`goversion major` updates module references in Markdown (`.md`, `.markdown`) and Go comments alongside the module path:
 
 | Before | After a v2 major bump |
 | --- | --- |
@@ -248,42 +248,29 @@ When `goversion major` changes the module path, it also updates self-references 
 | `import "example.com/widget/client"` in an example | `import "example.com/widget/v2/client"` |
 | `go get example.com/widget@latest` | `go get example.com/widget/v2@latest` |
 
-Existing major suffixes are replaced, so a v2-to-v3 bump changes `/v2` to `/v3` rather than appending another suffix.
-Anchors and query parameters are preserved.
-References pinned to a version such as `@v1.2.3`, references to another major version or module, and repository URLs are left unchanged.
-Nested modules are identified by their own `go.mod` declarations, so references to their module paths in parent documentation and imports remain unchanged too.
-`@latest` follows the new module path.
-Go runtime string literals are not rewritten; actual import declarations are handled by the self-import pass.
+Later major bumps replace the suffix, such as `/v2` → `/v3`.
+Changes are committed automatically; preview them with `goversion -dry major`.
 
-Import and documentation scans use Git's tracked and nonignored file lists, pruning directories with no eligible files before descending into them.
-This avoids walking ignored dependency and build trees such as `node_modules`, while retaining tracked files and ignore-rule exceptions inside otherwise ignored directories.
-`node_modules` is not excluded by name: files there remain eligible if tracked or not ignored.
-Scans stay within the selected module and always skip nested modules, `vendor`, `.git`, and symlinks.
-Changed documentation is included in the version commit automatically; no `-file` flag is needed.
-Use `goversion -dry major` to preview the affected files without changing them.
-These updates follow the `major` directive's module-path migration; explicit versions and `premajor` do not currently migrate module paths.
+- **Preserved:** anchors, query parameters, pinned versions (`@v1.2.3`), references to other major versions or modules, repository URLs, and runtime strings.
+- **Module-scoped:** nested modules and references to their declared paths stay unchanged.
+- **Git-aware:** tracked and nonignored files are eligible; fully ignored trees such as `node_modules` are pruned before descent.
+  Tracked files and ignore exceptions remain eligible regardless of directory name; `vendor`, `.git`, and symlinks are always skipped.
 
-To disable automatic documentation rewriting for an entire bump:
+This follows the `major` command's module-path migration; explicit versions and `premajor` do not migrate module paths.
+
+#### Skip all documentation updates
 
 ```console
 goversion -skip-docs major
 goversion -skip-docs -dry major
 ```
 
-This still updates the version, `go.mod`, and actual self-imports.
-Explicit `-bump-file` changes and post-bump hooks remain enabled, even when they modify documentation.
-Library callers can set `VersionOptions.SkipDocs` with `RunWithOptions` or `DryRunWithOptions`:
+Only automatic documentation rewriting is disabled; version updates, `go.mod`, self-imports, `-bump-file`, and hooks still run.
+Library callers can set [`VersionOptions.SkipDocs`](https://pkg.go.dev/github.com/bcomnes/goversion/v2/pkg#VersionOptions) with `RunWithOptions` or `DryRunWithOptions`.
 
-```go
-meta, err := goversion.RunWithOptions(goversion.VersionOptions{
-    WorkDir:  ".",
-    SkipDocs: true,
-}, "major")
-```
+#### Keep an individual reference
 
-#### Keep a reference on its current major version
-
-Place `goversion:ignore-next-line` above a reference that should not follow the module's major bump:
+To keep a v2 link when bumping to v3:
 
 ```markdown
 <!-- goversion:ignore-next-line -->
@@ -297,11 +284,9 @@ In Go documentation, use a standalone line comment:
 // Previous API: https://pkg.go.dev/example.com/widget/v2#Client
 ```
 
-The directive preserves all documentation references on the next physical line, including whitespace and line endings.
-A blank line consumes it; it does not skip ahead to the next reference.
-It applies only to documentation rewriting, not actual Go import declarations or `go.mod`.
-Dry runs honor it too and omit files whose only references are protected.
-The HTML directive is hidden in rendered Markdown; the Go comment is visible in generated documentation.
+The directive protects the next physical line only; a blank line consumes it.
+Both real and dry runs honor it for documentation, not actual imports or `go.mod`.
+The HTML directive is hidden when rendered; the Go comment appears in generated documentation.
 
 ### Publishing
 
