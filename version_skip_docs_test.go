@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -44,6 +45,7 @@ func TestVersionSkipDocsWorkdir(t *testing.T) {
 				{"skipDocsDry", true, true},
 				{"skipDocsReal", true, false},
 				{"defaultUpdatesDocs", false, false},
+				{"defaultUpdatesDocsDry", false, true},
 			} {
 				t.Run(tc.name, func(t *testing.T) {
 					dir, before := newVersionSkipDocsFixture(t)
@@ -73,15 +75,19 @@ func TestVersionSkipDocsWorkdir(t *testing.T) {
 					if !found {
 						t.Fatalf("output missing %q:\n%s", heading, out)
 					}
-					listed := make(map[string]bool)
+					var listed, expected []string
 					for _, line := range strings.Split(strings.TrimSpace(files), "\n") {
-						listed[filepath.Base(strings.TrimSpace(line))] = true
+						listed = append(listed, strings.TrimSpace(line))
 					}
 					for _, name := range []string{"version.go", "go.mod", "consumer.go", "README.md", "doc.go"} {
-						want := !tc.skipDocs || (name != "README.md" && name != "doc.go")
-						if listed[name] != want {
-							t.Errorf("updated file list contains %s = %v, want %v:\n%s", name, listed[name], want, out)
+						if !tc.skipDocs || (name != "README.md" && name != "doc.go") {
+							expected = append(expected, filepath.Join(dir, name))
 						}
+					}
+					slices.Sort(listed)
+					slices.Sort(expected)
+					if !slices.Equal(listed, expected) {
+						t.Errorf("updated file list:\ngot: %q\nwant: %q\n%s", listed, expected, out)
 					}
 					for name, original := range before {
 						want := original

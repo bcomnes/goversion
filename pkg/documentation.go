@@ -6,7 +6,6 @@ import (
 	"go/token"
 	"io/fs"
 	"os"
-
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -44,59 +43,65 @@ func rewriteDocumentationLine(text, oldMod, newMod string, excludedModules ...st
 	if oldMod == "" || oldMod == newMod {
 		return text
 	}
-	_, oldMajor, _ := module.SplitPathVersion(oldMod)
 	return documentationToken.ReplaceAllStringFunc(text, func(reference string) string {
-		core := strings.TrimRight(reference, ".,;:!)]}*|")
-		punctuation := reference[len(core):]
-		prefix, target := "", core
-		badge := false
-		for _, host := range []string{"https://pkg.go.dev/badge/", "http://pkg.go.dev/badge/", "https://pkg.go.dev/", "http://pkg.go.dev/", "https://godoc.org/", "http://godoc.org/"} {
-			if strings.HasPrefix(target, host) {
-				prefix, target = host, strings.TrimPrefix(target, host)
-				badge = strings.Contains(host, "/badge/")
-				break
-			}
-		}
-		// Anchors and query parameters belong to the URL, not the module path.
-		path, suffix := target, ""
-		if i := strings.IndexAny(path, "?#"); i >= 0 {
-			path, suffix = target[:i], target[i:]
-		}
-		modulePath := strings.SplitN(path, "@", 2)[0]
-		if badge {
-			modulePath = strings.TrimSuffix(modulePath, ".svg")
-		}
-		if excludedModuleReference(modulePath, excludedModules) {
-			return reference
-		}
-		if !strings.HasPrefix(path, oldMod) {
-			return reference
-		}
-		if i := strings.IndexByte(path, '@'); i >= 0 {
-			version := strings.SplitN(path[i+1:], "/", 2)[0]
-			if badge {
-				version = strings.TrimSuffix(version, ".svg")
-			}
-			if version != "latest" {
-				return reference
-			}
-		}
-		rest := strings.TrimPrefix(path, oldMod)
-		if badge && rest == ".svg" {
-			return prefix + newMod + rest + suffix + punctuation
-		}
-		if rest != "" && !strings.HasPrefix(rest, "/") && !strings.HasPrefix(rest, "@latest") {
-			return reference
-		}
-		majorPath := strings.SplitN(rest, "@", 2)[0]
-		if badge {
-			majorPath = strings.TrimSuffix(majorPath, ".svg")
-		}
-		if oldMajor == "" && documentationMajor.MatchString(majorPath) {
-			return reference
-		}
-		return prefix + newMod + rest + suffix + punctuation
+		return rewriteDocumentationReference(reference, oldMod, newMod, excludedModules...)
 	})
+}
+
+// rewriteDocumentationReference updates one token while preserving URL decoration,
+// pinned releases, other major versions, and references to independent modules.
+func rewriteDocumentationReference(reference, oldMod, newMod string, excludedModules ...string) string {
+	_, oldMajor, _ := module.SplitPathVersion(oldMod)
+	core := strings.TrimRight(reference, ".,;:!)]}*|")
+	punctuation := reference[len(core):]
+	prefix, target := "", core
+	badge := false
+	for _, host := range []string{"https://pkg.go.dev/badge/", "http://pkg.go.dev/badge/", "https://pkg.go.dev/", "http://pkg.go.dev/", "https://godoc.org/", "http://godoc.org/"} {
+		if strings.HasPrefix(target, host) {
+			prefix, target = host, strings.TrimPrefix(target, host)
+			badge = strings.Contains(host, "/badge/")
+			break
+		}
+	}
+	// Anchors and query parameters belong to the URL, not the module path.
+	path, suffix := target, ""
+	if i := strings.IndexAny(path, "?#"); i >= 0 {
+		path, suffix = target[:i], target[i:]
+	}
+	modulePath := strings.SplitN(path, "@", 2)[0]
+	if badge {
+		modulePath = strings.TrimSuffix(modulePath, ".svg")
+	}
+	if excludedModuleReference(modulePath, excludedModules) {
+		return reference
+	}
+	if !strings.HasPrefix(path, oldMod) {
+		return reference
+	}
+	if i := strings.IndexByte(path, '@'); i >= 0 {
+		version := strings.SplitN(path[i+1:], "/", 2)[0]
+		if badge {
+			version = strings.TrimSuffix(version, ".svg")
+		}
+		if version != "latest" {
+			return reference
+		}
+	}
+	rest := strings.TrimPrefix(path, oldMod)
+	if badge && rest == ".svg" {
+		return prefix + newMod + rest + suffix + punctuation
+	}
+	if rest != "" && !strings.HasPrefix(rest, "/") && !strings.HasPrefix(rest, "@latest") {
+		return reference
+	}
+	majorPath := strings.SplitN(rest, "@", 2)[0]
+	if badge {
+		majorPath = strings.TrimSuffix(majorPath, ".svg")
+	}
+	if oldMajor == "" && documentationMajor.MatchString(majorPath) {
+		return reference
+	}
+	return prefix + newMod + rest + suffix + punctuation
 }
 
 // rewriteGoDocumentation edits comment byte ranges only, leaving literals and

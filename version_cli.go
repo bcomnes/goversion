@@ -4,7 +4,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"slices"
 	"strings"
 
 	goversion "github.com/bcomnes/goversion/v2/pkg"
@@ -66,10 +65,6 @@ func runVersionCommand(arguments []string, output, errorOutput io.Writer) int {
 		fmt.Fprintln(errorOutput, "Error: <version-bump> positional argument is required")
 		printVersionUsage(errorOutput, flags)
 		return 1
-	}
-
-	if !slices.Contains(extraFiles, *versionFile) {
-		extraFiles = append(extraFiles, *versionFile)
 	}
 
 	var meta goversion.VersionMeta

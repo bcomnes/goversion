@@ -320,7 +320,7 @@ func gitCommit(workDir, newVersion, tag string, extraFiles []string) error {
 		return err
 	}
 	list := exec.Command("git", "ls-files", "--cached", "--full-name", "-z")
-	list.Dir = workDir
+	list.Dir = root
 	out, err := list.Output()
 	if err != nil {
 		return fmt.Errorf("list tracked files: %w", err)
@@ -596,7 +596,7 @@ func runWithOptions(options VersionOptions, versionArg string, confinePaths bool
 			if err != nil {
 				return meta, err
 			}
-			rewritten = uniquePaths(append(rewritten, docs...))
+			rewritten = append(rewritten, docs...)
 		}
 	}
 
@@ -619,24 +619,19 @@ func runWithOptions(options VersionOptions, versionArg string, confinePaths bool
 	}
 
 	// 7. Stage, commit, and tag
-	filesToCommit := make([]string, len(extraFiles))
-	copy(filesToCommit, extraFiles)
-	filesToCommit = append(filesToCommit, versionFilePath)
+	var changedFiles []string
 	if meta.BumpType == "major" && hasGoMod {
-		filesToCommit = append(filesToCommit, filepath.Join(modDir, "go.mod"))
+		changedFiles = append(changedFiles, filepath.Join(modDir, "go.mod"))
 	}
-	filesToCommit = append(filesToCommit, rewritten...)
-	filesToCommit = append(filesToCommit, bumpedFiles...)
-	if err := gitCommit(workDir, meta.NewVersion, meta.Tag, uniquePaths(filesToCommit)); err != nil {
+	changedFiles = append(changedFiles, versionFilePath)
+	changedFiles = append(changedFiles, rewritten...)
+	changedFiles = uniquePaths(append(changedFiles, bumpedFiles...))
+	filesToCommit := uniquePaths(append(append([]string{}, extraFiles...), changedFiles...))
+	if err := gitCommit(workDir, meta.NewVersion, meta.Tag, filesToCommit); err != nil {
 		return meta, err
 	}
 
-	meta.UpdatedFiles = append([]string{versionFilePath}, rewritten...)
-	meta.UpdatedFiles = append(meta.UpdatedFiles, bumpedFiles...)
-	if meta.BumpType == "major" && hasGoMod {
-		meta.UpdatedFiles = append([]string{filepath.Join(modDir, "go.mod")}, meta.UpdatedFiles...)
-	}
-	meta.UpdatedFiles = uniquePaths(meta.UpdatedFiles)
+	meta.UpdatedFiles = changedFiles
 
 	return meta, nil
 }
