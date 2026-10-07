@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"path/filepath"
 	"strings"
 
 	goversion "github.com/bcomnes/goversion/v2/pkg"
@@ -67,8 +68,12 @@ func runVersionCommand(arguments []string, output, errorOutput io.Writer) int {
 		return 1
 	}
 
+	displayWorkDir, err := filepath.Abs(*workDir)
+	if err != nil {
+		fmt.Fprintln(errorOutput, "Error: resolve work directory:", err)
+		return 1
+	}
 	var meta goversion.VersionMeta
-	var err error
 	options := goversion.VersionOptions{
 		WorkDir:        *workDir,
 		VersionFile:    *versionFile,
@@ -103,6 +108,9 @@ func runVersionCommand(arguments []string, output, errorOutput io.Writer) int {
 			fmt.Fprintln(output, "Files updated:")
 		}
 		for _, file := range meta.UpdatedFiles {
+			if relative, err := filepath.Rel(displayWorkDir, file); err == nil {
+				file = relative
+			}
 			fmt.Fprintf(output, "  %s\n", file)
 		}
 	}
