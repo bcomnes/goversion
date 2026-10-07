@@ -81,7 +81,7 @@ func TestVersionSkipDocsWorkdir(t *testing.T) {
 					}
 					for _, name := range []string{"version.go", "go.mod", "consumer.go", "README.md", "doc.go"} {
 						if !tc.skipDocs || (name != "README.md" && name != "doc.go") {
-							expected = append(expected, filepath.Join(dir, name))
+							expected = append(expected, name)
 						}
 					}
 					slices.Sort(listed)
